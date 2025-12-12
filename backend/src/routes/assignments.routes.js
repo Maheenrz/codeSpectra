@@ -1,13 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { body } = require('express-validator');
-const assignmentController = require('../controllers/assignmentController');
-const authMiddleware = require('../middleware/auth');
-const instructorMiddleware = require('../middleware/instructor');
+const assignmentController = require('../controllers/assignment.controller');
+const { authenticate, isInstructor } = require('../middleware/auth'); // CHANGED
 
-router.use(authMiddleware);
+router.use(authenticate); // CHANGED
 
-// Validation rules
+// Validation rules (keep as is)
 const assignmentValidation = [
   body('title').notEmpty().trim(),
   body('description').notEmpty().trim(),
@@ -19,15 +18,13 @@ const assignmentValidation = [
   body('mediumSimilarityThreshold').isFloat({ min: 0, max: 100 })
 ];
 
-// Routes
+// Routes - update middleware calls
 router.get('/', assignmentController.getAllAssignments);
-router.post('/', instructorMiddleware, assignmentValidation, assignmentController.createAssignment);
+router.post('/', isInstructor, assignmentValidation, assignmentController.createAssignment); // CHANGED
 router.get('/:id', assignmentController.getAssignmentById);
-router.put('/:id', instructorMiddleware, assignmentValidation, assignmentController.updateAssignment);
-router.delete('/:id', instructorMiddleware, assignmentController.deleteAssignment);
+router.put('/:id', isInstructor, assignmentValidation, assignmentController.updateAssignment); // CHANGED
+router.delete('/:id', isInstructor, assignmentController.deleteAssignment); // CHANGED
 router.get('/:id/submissions', assignmentController.getAssignmentSubmissions);
-
-// Student submission
 router.post('/:id/submit', assignmentController.submitAssignment);
 
 module.exports = router;

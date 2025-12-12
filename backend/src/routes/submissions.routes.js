@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const submissionController = require('../controllers/submission.controller');
-const { authenticate, isInstructor } = require('../middleware/auth.middleware');
+const { authenticate, isInstructor } = require('../middleware/auth');
 
 // All routes require authentication
 router.use(authenticate);
