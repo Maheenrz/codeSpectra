@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      # CRUCIAL FIX: Ensure this path correctly points to your custom Nginx config.
+      - ./frontend/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+      - analysis-engine
+
+  frontend:
+    build: ./frontend
+    environment:
+      # This variable must be defined in your root .env file
+      - REACT_APP_API_URL=${REACT_APP_API_URL}
+
+  backend:
+    build: ./backend
+    # These variables are read from your root .env file
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      # Add any other backend environment variables here
+    depends_on:
+      - postgresql
+      - redis
+    volumes:
+      # CRITICAL: Shared volume for file uploads
+      - ./uploads:/app/uploads
+
+  analysis-engine:
+    build: ./analysis-engine
+    ports:
+      - "8002:8002" # Port for debugging/internal communication
+    environment:
+      # These variables are read from your root .env file
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+      # REMOVED: NICAD_HOME is no longer needed
+    depends_on:
+      - postgresql
+      - redis
+    volumes:
+      # CRITICAL: Shared volume for file analysis
+      - ./uploads:/app/uploads
+
+  postgresql:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+
+volumes:
+  postgres_data:

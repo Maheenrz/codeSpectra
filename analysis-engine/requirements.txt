@@ -1,0 +1,11 @@
+# requirements.txt
+fastapi==0.104.1
+uvicorn==0.24.0
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+pydantic==2.10.4
+lxml==4.9.3  # For XML parsing
+httpx==0.25.1  # For API calls
+python-multipart==0.0.6
+pygments
