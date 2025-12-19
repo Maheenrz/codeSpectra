@@ -5,19 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CodeSpectra - Clone Detection</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
         }
-        
         .container {
             max-width: 1200px;
             margin: 0 auto;
@@ -26,19 +20,8 @@
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             padding: 40px;
         }
-        
-        h1 {
-            text-align: center;
-            color: #667eea;
-            margin-bottom: 10px;
-            font-size: 2.5em;
-        }
-        
-        .subtitle {
-            text-align: center;
-            color: #666;
-            margin-bottom: 40px;
-        }
+        h1 { text-align: center; color: #667eea; margin-bottom: 10px; font-size: 2.5em; }
+        .subtitle { text-align: center; color: #666; margin-bottom: 40px; }
         
         .upload-section {
             border: 3px dashed #667eea;
@@ -49,290 +32,112 @@
             margin-bottom: 30px;
             transition: all 0.3s;
         }
-        
-        .upload-section:hover {
-            border-color: #764ba2;
-            background: #f0f2ff;
-        }
-        
-        .upload-section.drag-over {
-            border-color: #4caf50;
-            background: #e8f5e9;
-        }
-        
-        .upload-icon {
-            font-size: 4em;
-            color: #667eea;
-            margin-bottom: 20px;
-        }
-        
-        .upload-text {
-            font-size: 1.2em;
-            color: #333;
-            margin-bottom: 10px;
-        }
-        
-        .upload-hint {
-            color: #666;
-            font-size: 0.9em;
-        }
-        
-        .file-input {
-            display: none;
-        }
+        .upload-section:hover { border-color: #764ba2; background: #f0f2ff; }
+        .upload-section.drag-over { border-color: #4caf50; background: #e8f5e9; }
+        .upload-icon { font-size: 4em; color: #667eea; margin-bottom: 20px; }
+        .upload-text { font-size: 1.2em; color: #333; margin-bottom: 10px; }
+        .upload-hint { color: #666; font-size: 0.9em; }
+        .file-input { display: none; }
         
         .btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 12px 30px;
-            border-radius: 25px;
-            font-size: 1em;
-            cursor: pointer;
-            transition: transform 0.2s;
-            margin: 10px;
+            color: white; border: none; padding: 12px 30px;
+            border-radius: 25px; font-size: 1em; cursor: pointer;
+            transition: transform 0.2s; margin: 10px;
         }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
+        .settings { background: #f8f9ff; padding: 20px; border-radius: 15px; margin-bottom: 30px; }
+        .settings h3 { color: #667eea; margin-bottom: 15px; }
         
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
+        .checkbox-group { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px; }
+        .checkbox-item { display: flex; align-items: center; gap: 8px; }
+        .checkbox-item input[type="checkbox"] { width: 20px; height: 20px; cursor: pointer; }
         
-        .settings {
-            background: #f8f9ff;
-            padding: 20px;
-            border-radius: 15px;
-            margin-bottom: 30px;
-        }
-        
-        .settings h3 {
-            color: #667eea;
-            margin-bottom: 15px;
-        }
-        
-        .checkbox-group {
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
-            margin-bottom: 20px;
-        }
-        
-        .checkbox-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .checkbox-item input[type="checkbox"] {
-            width: 20px;
-            height: 20px;
-            cursor: pointer;
-        }
-        
-        .radio-group {
-            display: flex;
-            gap: 30px;
-            margin-top: 15px;
-        }
-        
-        .radio-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .radio-item input[type="radio"] {
-            width: 18px;
-            height: 18px;
-            cursor: pointer;
-        }
-        
-        .results-section {
-            display: none;
-            margin-top: 30px;
-        }
-        
-        .results-section.show {
-            display: block;
-        }
-        
+        .results-section { display: none; margin-top: 30px; }
+        .results-section.show { display: block; }
         .results-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 15px 15px 0 0;
-            margin-bottom: 0;
+            color: white; padding: 20px; border-radius: 15px 15px 0 0; margin-bottom: 0;
         }
-        
         .results-body {
-            border: 2px solid #667eea;
-            border-top: none;
-            border-radius: 0 0 15px 15px;
-            padding: 20px;
+            border: 2px solid #667eea; border-top: none;
+            border-radius: 0 0 15px 15px; padding: 20px;
         }
+        .result-type { margin-bottom: 30px; padding: 20px; background: #f8f9ff; border-radius: 10px; }
+        .result-type h4 { color: #667eea; margin-bottom: 15px; font-size: 1.3em; }
         
-        .result-type {
-            margin-bottom: 30px;
-            padding: 20px;
-            background: #f8f9ff;
-            border-radius: 10px;
-        }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        thead { background: #667eea; color: white; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        tbody tr:hover { background: #f0f2ff; }
         
-        .result-type h4 {
-            color: #667eea;
-            margin-bottom: 15px;
-            font-size: 1.3em;
-        }
-        
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-        
-        thead {
-            background: #667eea;
-            color: white;
-        }
-        
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-        
-        tbody tr:hover {
-            background: #f0f2ff;
-        }
-        
-        .best-method {
-            background: #4caf50 !important;
-            color: white;
-            font-weight: bold;
-        }
-        
-        .progress {
-            display: none;
-            margin: 20px 0;
-        }
-        
-        .progress.show {
-            display: block;
-        }
-        
-        .progress-bar {
-            width: 100%;
-            height: 30px;
-            background: #e0e0e0;
-            border-radius: 15px;
-            overflow: hidden;
-        }
-        
+        .progress { display: none; margin: 20px 0; }
+        .progress.show { display: block; }
+        .progress-bar { width: 100%; height: 30px; background: #e0e0e0; border-radius: 15px; overflow: hidden; }
         .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            width: 0%;
-            transition: width 0.3s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
+            height: 100%; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%; transition: width 0.3s; display: flex;
+            align-items: center; justify-content: center; color: white; font-weight: bold;
         }
         
-        .file-list {
-            margin-top: 20px;
-            padding: 15px;
-            background: #f8f9ff;
-            border-radius: 10px;
-        }
-        
+        .file-list { margin-top: 20px; padding: 15px; background: #f8f9ff; border-radius: 10px; }
         .file-item {
-            padding: 8px;
-            margin: 5px 0;
-            background: white;
-            border-radius: 5px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            padding: 8px; margin: 5px 0; background: white; border-radius: 5px;
+            display: flex; justify-content: space-between; align-items: center;
         }
         
-        .status-badge {
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85em;
-            font-weight: bold;
-        }
-        
+        .status-badge { padding: 4px 12px; border-radius: 12px; font-size: 0.85em; font-weight: bold; }
         .status-success { background: #4caf50; color: white; }
         .status-error { background: #f44336; color: white; }
         .status-pending { background: #ff9800; color: white; }
+        .status-info { background: #2196F3; color: white; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🔍 CodeSpectra</h1>
-        <p class="subtitle">Multi-Method Clone Detection System</p>
+        <p class="subtitle">Multi-Language Clone Detection System (Type 1)</p>
         
-        <!-- Upload Section -->
         <div class="upload-section" id="dropZone">
             <div class="upload-icon">📁</div>
             <div class="upload-text">Drag & Drop files or click to browse</div>
-            <div class="upload-hint">Supports: .py, .java, .cpp, .c, .js and ZIP files</div>
-            <input type="file" id="fileInput" class="file-input" multiple accept=".py,.java,.cpp,.c,.js,.zip">
+            <div class="upload-hint">Supports: .ts, .js, .py, .java, .cpp, .cs, .go, .php, .rb and ZIP projects</div>
+            
+            <input type="file" id="fileInput" class="file-input" multiple accept=".py,.java,.cpp,.c,.h,.js,.ts,.cs,.go,.php,.rb,.zip">
+            
             <div style="margin-top: 20px;">
                 <button class="btn" onclick="document.getElementById('fileInput').click()">
                     Browse Files
                 </button>
-                <button class="btn" onclick="document.getElementById('fileInput').setAttribute('webkitdirectory', '')">
-                    Upload Folder
-                </button>
             </div>
         </div>
         
-        <!-- File List -->
         <div id="fileList" class="file-list" style="display: none;">
             <h4>📄 Selected Files</h4>
             <div id="fileItems"></div>
         </div>
         
-        <!-- Settings -->
         <div class="settings">
             <h3>⚙️ Detection Settings</h3>
             
             <div class="checkbox-group">
                 <div class="checkbox-item">
-                    <input type="checkbox" id="type1" checked>
-                    <label for="type1">Type 1 (Exact Clones)</label>
+                    <input type="checkbox" id="type1" checked disabled>
+                    <label for="type1">✅ Type 1 (Exact Matches) - Active</label>
                 </div>
                 <div class="checkbox-item">
-                    <input type="checkbox" id="type2" checked>
-                    <label for="type2">Type 2 (Renamed Clones)</label>
+                    <input type="checkbox" id="type2" disabled>
+                    <label for="type2" style="opacity: 0.6">Type 2 (Coming Soon)</label>
                 </div>
                 <div class="checkbox-item">
-                    <input type="checkbox" id="type3" checked>
-                    <label for="type3">Type 3 (Near-Miss Clones)</label>
+                    <input type="checkbox" id="type3" disabled>
+                    <label for="type3" style="opacity: 0.6">Type 3 (Coming Soon)</label>
                 </div>
                 <div class="checkbox-item">
-                    <input type="checkbox" id="type4" checked>
-                    <label for="type4">Type 4 (Semantic Clones)</label>
-                </div>
-            </div>
-            
-            <h4 style="margin-top: 20px; margin-bottom: 10px;">Analysis Mode:</h4>
-            <div class="radio-group">
-                <div class="radio-item">
-                    <input type="radio" id="fast" name="mode" value="fast">
-                    <label for="fast">Fast (Best method only)</label>
-                </div>
-                <div class="radio-item">
-                    <input type="radio" id="compare" name="mode" value="compare" checked>
-                    <label for="compare">Compare All Methods</label>
+                    <input type="checkbox" id="type4" disabled>
+                    <label for="type4" style="opacity: 0.6">Type 4 (Coming Soon)</label>
                 </div>
             </div>
             
@@ -343,25 +148,21 @@
             </div>
         </div>
         
-        <!-- Progress -->
         <div class="progress" id="progress">
-            <h4 style="margin-bottom: 10px;">Analyzing...</h4>
+            <h4 style="margin-bottom: 10px;">Analyzing Code...</h4>
             <div class="progress-bar">
                 <div class="progress-fill" id="progressFill">0%</div>
             </div>
         </div>
         
-        <!-- Results -->
         <div class="results-section" id="results">
             <div class="results-header">
                 <h3>📊 Analysis Results</h3>
             </div>
-            <div class="results-body" id="resultsBody">
-                <!-- Results will be inserted here -->
-            </div>
+            <div class="results-body" id="resultsBody"></div>
             
             <div style="text-align: center; margin-top: 20px;">
-                <button class="btn" onclick="downloadReport()">📥 Download Report (JSON)</button>
+                <button class="btn" onclick="downloadReport()">📥 Download JSON Report</button>
                 <button class="btn" onclick="resetAnalysis()">🔄 New Analysis</button>
             </div>
         </div>
@@ -371,35 +172,27 @@
         let selectedFiles = [];
         let analysisResults = null;
         
-        // File upload handling
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
         const analyzeBtn = document.getElementById('analyzeBtn');
         
-        dropZone.addEventListener('click', () => {
-            if (event.target.tagName !== 'BUTTON') {
-                fileInput.click();
-            }
+        // Drag & Drop handlers
+        dropZone.addEventListener('click', (e) => {
+            if (e.target.tagName !== 'BUTTON') fileInput.click();
         });
-        
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
             dropZone.classList.add('drag-over');
         });
-        
         dropZone.addEventListener('dragleave', () => {
             dropZone.classList.remove('drag-over');
         });
-        
         dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZone.classList.remove('drag-over');
             handleFiles(e.dataTransfer.files);
         });
-        
-        fileInput.addEventListener('change', (e) => {
-            handleFiles(e.target.files);
-        });
+        fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
         
         function handleFiles(files) {
             selectedFiles = Array.from(files);
@@ -417,7 +210,7 @@
             }
             
             fileList.style.display = 'block';
-            fileItems.innerHTML = selectedFiles.map((file, index) => `
+            fileItems.innerHTML = selectedFiles.map(file => `
                 <div class="file-item">
                     <span>${file.name} (${formatSize(file.size)})</span>
                     <span class="status-badge status-pending">Ready</span>
@@ -432,59 +225,44 @@
         }
         
         async function startAnalysis() {
-            // Get selected clone types
-            const types = [];
-            if (document.getElementById('type1').checked) types.push('type1');
-            if (document.getElementById('type2').checked) types.push('type2');
-            if (document.getElementById('type3').checked) types.push('type3');
-            if (document.getElementById('type4').checked) types.push('type4');
-            
-            if (types.length === 0) {
-                alert('Please select at least one clone type');
-                return;
-            }
-            
-            // Get analysis mode
-            const mode = document.querySelector('input[name="mode"]:checked').value;
+            if (selectedFiles.length === 0) return;
             
             // Show progress
             document.getElementById('progress').classList.add('show');
             document.getElementById('results').classList.remove('show');
             analyzeBtn.disabled = true;
             
-            // Simulate progress
+            // Animate progress
             let progress = 0;
             const progressInterval = setInterval(() => {
-                progress += Math.random() * 15;
+                progress += Math.random() * 5;
                 if (progress > 90) progress = 90;
                 updateProgress(progress);
-            }, 500);
+            }, 300);
             
-            // Create FormData
+            // Prepare form data
             const formData = new FormData();
-            selectedFiles.forEach(file => {
-                formData.append('files', file);
-            });
-            formData.append('types', JSON.stringify(types));
-            formData.append('mode', mode);
+            selectedFiles.forEach(file => formData.append('files', file));
             
             try {
-                // Send to backend
+                // Call analysis engine
                 const response = await fetch('http://localhost:8000/api/analyze', {
                     method: 'POST',
                     body: formData
                 });
                 
                 if (!response.ok) {
-                    throw new Error('Analysis failed');
+                    throw new Error(`Server Error: ${response.status}`);
                 }
                 
                 const results = await response.json();
                 analysisResults = results;
                 
+                // Complete progress
                 clearInterval(progressInterval);
                 updateProgress(100);
                 
+                // Show results
                 setTimeout(() => {
                     displayResults(results);
                     document.getElementById('progress').classList.remove('show');
@@ -494,7 +272,8 @@
                 
             } catch (error) {
                 clearInterval(progressInterval);
-                alert('Analysis failed: ' + error.message);
+                console.error('Analysis Error:', error);
+                alert('❌ Analysis failed! Make sure the analysis engine is running on http://localhost:8000');
                 document.getElementById('progress').classList.remove('show');
                 analyzeBtn.disabled = false;
             }
@@ -507,53 +286,180 @@
         }
         
         function displayResults(results) {
-            const resultsBody = document.getElementById('resultsBody');
-            
+            const container = document.getElementById('resultsBody');
             let html = '';
+
+            // ... (Inside displayResults, before the Summary Table) ...
             
-            for (const [type, comparison] of Object.entries(results)) {
+            // --- NEW: Skipped Files Warning ---
+            if (results.summary.skipped_files && results.summary.skipped_files.length > 0) {
                 html += `
-                    <div class="result-type">
-                        <h4>${type.toUpperCase()} - ${comparison.total_unique_clones} clones found</h4>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Method</th>
-                                    <th>Clones Found</th>
-                                    <th>Time (ms)</th>
-                                    <th>Accuracy</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${comparison.method_results.map(result => `
-                                    <tr class="${result.method_name === comparison.best_method ? 'best-method' : ''}">
-                                        <td>${result.method_name} ${result.method_name === comparison.best_method ? '🏆' : ''}</td>
-                                        <td>${result.clones_found}</td>
-                                        <td>${result.execution_time_ms}</td>
-                                        <td>${'⭐'.repeat(Math.min(5, Math.ceil(result.clones_found / 5)))}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                        <p style="margin-top: 10px;">
-                            <strong>Best Method:</strong> ${comparison.best_method} | 
-                            <strong>Consensus:</strong> ${comparison.consensus_clones} clones
-                        </p>
+                    <div style="margin-bottom: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 10px; color: #856404;">
+                        <h4 style="margin-bottom: 10px; display:flex; align-items:center; gap:10px;">
+                            <span>⚠️</span> Files Skipped (${results.summary.skipped_files.length})
+                        </h4>
+                        <ul style="margin-left: 20px; font-size: 0.9em;">
+                            ${results.summary.skipped_files.map(f => `
+                                <li><strong>${f.file}</strong>: ${f.reason}</li>
+                            `).join('')}
+                        </ul>
                     </div>
                 `;
             }
             
-            resultsBody.innerHTML = html;
+            // Summary Section
+            if (results.summary) {
+                html += `
+                    <div class="result-type">
+                        <h4>📊 Project Summary</h4>
+                        <p style="margin-bottom:15px; font-size:1.3em; text-align:center;">
+                            <strong>Total Clones Found:</strong> 
+                            <span style="color: ${results.summary.total_clones > 0 ? '#f44336' : '#4caf50'}; font-size:1.5em;">
+                                ${results.summary.total_clones}
+                            </span>
+                        </p>
+                        <p style="margin-bottom:15px; text-align:center; color:#666;">
+                            Files Analyzed: ${results.summary.files_analyzed || 0}
+                        </p>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Language</th>
+                                    <th>Clones Detected</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>`;
+                
+                const breakdown = results.summary.breakdown || {};
+                const languages = Object.keys(breakdown);
+                
+                if (languages.length > 0) {
+                    languages.forEach(lang => {
+                        const count = breakdown[lang];
+                        html += `
+                            <tr>
+                                <td style="text-transform: capitalize; font-weight:600;">${lang}</td>
+                                <td style="font-weight:600;">${count}</td>
+                                <td>
+                                    ${count > 0 
+                                        ? '<span class="status-badge status-error">⚠️ Clones Found</span>' 
+                                        : '<span class="status-badge status-success">✅ Clean</span>'}
+                                </td>
+                            </tr>`;
+                    });
+                } else {
+                    html += `<tr><td colspan="3" style="text-align:center; color:#999;">No code files found to analyze</td></tr>`;
+                }
+                
+                html += `</tbody></table></div>`;
+            }
+
+
+            // ... (inside displayResults function, after the Summary Table) ...
+
+            // --- NEW: Accuracy / Best Method Section ---
+            if (results.summary.best_method && results.summary.best_method !== "None") {
+                const bestMethod = results.summary.best_method;
+                const accuracyData = results.summary.method_accuracy || {};
+                
+                html += `
+                    <div style="margin-top: 30px; padding: 20px; background: white; border-radius: 10px; border: 1px solid #e0e0e0;">
+                        <h4 style="color: #667eea; margin-bottom: 15px;">🏆 Method Accuracy Comparison</h4>
+                        
+                        <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                            <div style="flex: 1; min-width: 200px; padding: 15px; background: linear-gradient(135deg, #4caf50 0%, #81c784 100%); color: white; border-radius: 10px;">
+                                <div style="font-size: 0.9em; opacity: 0.9;">Best Performer</div>
+                                <div style="font-size: 1.4em; font-weight: bold; margin-top: 5px;">${bestMethod}</div>
+                                <div style="font-size: 0.8em; margin-top: 5px;">Found the most matches</div>
+                            </div>
+                `;
+                
+                // Add stats for other methods
+                for (const [method, score] of Object.entries(accuracyData)) {
+                    if (method === bestMethod) continue; // Skip the winner (already shown)
+                    
+                    html += `
+                        <div style="flex: 1; min-width: 150px; padding: 15px; background: #f5f5f5; border-radius: 10px; border: 1px solid #ddd;">
+                            <div style="font-size: 0.9em; color: #666;">${method}</div>
+                            <div style="font-size: 1.2em; font-weight: bold; color: #333; margin-top: 5px;">${score}</div>
+                        </div>
+                    `;
+                }
+                
+                html += `</div></div>`;
+            }
+            
+            // ... (Continue to Detailed Matches section) ...
+            
+            // Detailed Matches
+            html += `<div class="result-type"><h4>🔍 Detailed Clone Matches</h4>`;
+            
+            if (results.matches && results.matches.length > 0) {
+                html += `
+                    <p style="margin-bottom:15px; color:#666;">
+                        Found ${results.matches.length} exact match${results.matches.length > 1 ? 'es' : ''} across files:
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Language</th>
+                                <th>File A</th>
+                                <th>File B</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+                
+                results.matches.forEach((match, idx) => {
+                    html += `
+                        <tr>
+                            <td>
+                                <span class="status-badge status-info" style="text-transform:capitalize;">
+                                    ${match.language || 'Code'}
+                                </span>
+                            </td>
+                            <td>
+                                <strong>${match.file1}</strong><br>
+                                <small style="color:#666;">Lines ${match.line1}-${match.end1 || match.line1}</small><br>
+                                <small style="color:#999;">(${match.type1 || 'block'})</small>
+                            </td>
+                            <td>
+                                <strong>${match.file2}</strong><br>
+                                <small style="color:#666;">Lines ${match.line2}-${match.end2 || match.line2}</small><br>
+                                <small style="color:#999;">(${match.type2 || 'block'})</small>
+                            </td>
+                            <td>
+                                <span class="status-badge status-success">100% Match</span><br>
+                                <small style="color:#666;">${match.detector || 'Type 1 Detector'}</small>
+                            </td>
+                        </tr>`;
+                });
+                
+                html += `</tbody></table>`;
+            } else {
+                html += `
+                    <div style="text-align:center; padding:40px; color:#4caf50; font-size:1.2em;">
+                        ✅ <strong>No clones detected!</strong><br>
+                        <small style="color:#666; font-size:0.9em;">Your code appears to be original.</small>
+                    </div>`;
+            }
+            
+            html += `</div>`;
+            
+            container.innerHTML = html;
         }
         
         function downloadReport() {
-            const blob = new Blob([JSON.stringify(analysisResults, null, 2)], {
-                type: 'application/json'
+            if (!analysisResults) return;
+            
+            const blob = new Blob([JSON.stringify(analysisResults, null, 2)], { 
+                type: 'application/json' 
             });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `clone-analysis-${Date.now()}.json`;
+            a.download = `codespectra-report-${Date.now()}.json`;
             a.click();
             URL.revokeObjectURL(url);
         }
