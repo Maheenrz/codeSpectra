@@ -19,6 +19,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Connect the analysis route
+app.include_router(analysis.router, prefix="/api")
+
+@app.get("/")
+def read_root():
+    return {"status": "CodeSpectra Engine Running"}
 
 # --- API Endpoint for Type 2 Analysis ---
 @app.post("/analyze/type2/")
