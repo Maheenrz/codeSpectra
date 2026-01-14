@@ -22,8 +22,11 @@ tree-sitter
 # but this library is the core engine.
 
 # --- Type 3: Near-Miss Clones (Fuzzy Matching) ---
-python-levenshtein
-rapidfuzz
+psycopg2-binary
+pygments
+lizard
+numpy
+scipy
 
 # --- Type 4: Semantic Clones (Metrics & Graphs) ---
 radon

@@ -1,3 +1,4 @@
+# detection-engine.py
 """
 Multi-Method Detection Engine
 Runs multiple detection methods per type and compares results
@@ -59,7 +60,7 @@ class MultiMethodDetectionEngine:
     
     def _load_methods(self):
         """Load all available detection methods"""
-        # Import Type 1 methods
+        # --- Type 1 Methods ---
         try:
             from detectors.type1.ast_exact_method import Type1ASTMethod
             from detectors.type1.hash_method import Type1HashMethod
@@ -73,7 +74,7 @@ class MultiMethodDetectionEngine:
         except ImportError as e:
             print(f"Warning: Some Type 1 methods not available: {e}")
         
-        # Import Type 2 methods
+        # --- Type 2 Methods ---
         try:
             from detectors.type2.ast_normalized_method import Type2ASTMethod
             from detectors.type2.token_based_method import Type2TokenMethod
@@ -85,19 +86,18 @@ class MultiMethodDetectionEngine:
         except ImportError as e:
             print(f"Warning: Some Type 2 methods not available: {e}")
         
-        # Import Type 3 methods
+        # --- Type 3 Methods (UPDATED TO USE YOUR HYBRID DETECTOR) ---
         try:
-            from detectors.type3.ast_diff_method import Type3ASTDiffMethod
-            from detectors.type3.sequence_matcher_method import Type3SequenceMethod
+            # This matches your file: detectors/type3/hybrid_detector.py
+            from detectors.type3.hybrid_detector import Type3HybridDetector
             
             self.methods_registry[CloneType.TYPE3] = [
-                Type3ASTDiffMethod(self.config),
-                Type3SequenceMethod(self.config),
+                Type3HybridDetector() # We use your new class here
             ]
         except ImportError as e:
-            print(f"Warning: Some Type 3 methods not available: {e}")
+            print(f"Warning: Type 3 Hybrid Detector not available: {e}")
         
-        # Import Type 4 methods
+        # --- Type 4 Methods ---
         try:
             from detectors.type4.ast_semantic_method import Type4ASTSemanticMethod
             from detectors.type4.metrics_method import Type4MetricsMethod
@@ -108,7 +108,8 @@ class MultiMethodDetectionEngine:
             ]
         except ImportError as e:
             print(f"Warning: Some Type 4 methods not available: {e}")
-    
+
+            
     def detect_with_comparison(
         self, 
         code_fragments: List[Any],
@@ -144,6 +145,10 @@ class MultiMethodDetectionEngine:
                 continue
             
             method_results = []
+
+            for method in methods:
+                if hasattr(method, 'prepare_batch'):
+                    method.prepare_batch(code_fragments)
             
             if parallel and len(methods) > 1:
                 # Run methods in parallel
@@ -161,14 +166,17 @@ class MultiMethodDetectionEngine:
         
         return results
     
-    def _run_methods_sequential(
-        self, 
-        methods: List[Any], 
-        code_fragments: List[Any]
-    ) -> List[MethodResult]:
-        """Run detection methods one by one"""
+    def _run_methods_sequential(self, methods, code_fragments):
         results = []
-        
+       
+        # If we are doing Type 3, we need to train the frequency filter first
+        # code_fragments should be a list of file paths
+        for method in methods:
+            if hasattr(method, 'prepare_batch'):
+                print(f"Pre-processing batch for {method.__class__.__name__}...")
+                method.prepare_batch(code_fragments)
+
+
         for method in methods:
             method_name = method.__class__.__name__
             print(f"\nRunning {method_name}...")

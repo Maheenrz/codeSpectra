@@ -1,5 +1,7 @@
 const pool = require('../config/database');
 const crypto = require('crypto');
+const axios = require('axios');
+const FormData = require('form-data');
 const fs = require('fs').promises;
 
 // Get all submissions (with filters)
@@ -197,28 +199,53 @@ exports.getSubmissionAnalysis = async (req, res) => {
 };
 
 // Trigger analysis for submission
+
+
 exports.triggerAnalysis = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params; // This is the Assignment ID
 
-    // Update submission status
-    await pool.query(
-      `UPDATE submissions 
-       SET analysis_status = 'processing'
-       WHERE submission_id = $1`,
+    // 1. Get all submissions for this assignment
+    const result = await pool.query(
+      'SELECT submission_id, file_path, filename FROM submissions WHERE assignment_id = $1',
       [id]
     );
 
-    // TODO: Send to analysis queue/service
-    // This would typically trigger your Python analysis engine
+    if (result.rows.length < 2) {
+      return res.status(400).json({ message: 'Need at least 2 submissions to run analysis.' });
+    }
 
-    res.json({ 
-      message: 'Analysis triggered successfully',
-      status: 'processing'
+    // 2. Prepare files for Python FastAPI
+    const form = new FormData();
+    result.rows.forEach(sub => {
+      form.append('files', fs.createReadStream(sub.file_path), sub.filename);
     });
+
+    // 3. Call Python Engine (Port 5000)
+    const pythonResponse = await axios.post('http://localhost:5000/api/analyze-type3-batch', form, {
+      headers: { ...form.getHeaders() }
+    });
+
+    // 4. Save results to clone_results table and update status
+    const analysisResults = pythonResponse.data.results;
+    for (const match of analysisResults) {
+      await pool.query(
+        `INSERT INTO clone_results (submission1_id, submission2_id, similarity_score, clone_type)
+         VALUES (
+           (SELECT submission_id FROM submissions WHERE filename = $1 AND assignment_id = $5 LIMIT 1),
+           (SELECT submission_id FROM submissions WHERE filename = $2 AND assignment_id = $5 LIMIT 1),
+           $3, $4
+         )`,
+        [match.file_a, match.file_b, match.score * 100, 'type3', id]
+      );
+    }
+
+    await pool.query("UPDATE submissions SET analysis_status = 'completed' WHERE assignment_id = $1", [id]);
+
+    res.json({ message: 'Analysis complete', results: pythonResponse.data });
   } catch (error) {
-    console.error('Trigger analysis error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Analysis Error:', error.message);
+    res.status(500).json({ message: 'Python Engine failed', error: error.message });
   }
 };
 

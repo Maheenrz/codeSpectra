@@ -306,37 +306,19 @@ exports.submitAssignment = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.user_id;
 
-    // Check if assignment exists and is active
-    const assignment = await pool.query(
-      `SELECT a.*, c.course_id 
-       FROM assignments a
-       JOIN courses c ON a.course_id = c.course_id
-       JOIN enrollments e ON c.course_id = e.course_id
-       WHERE a.assignment_id = $1 AND e.student_id = $2 AND a.due_date > NOW()`,
-      [id, userId]
-    );
-
-    if (assignment.rows.length === 0) {
-      return res.status(404).json({ 
-        message: 'Assignment not found, not enrolled, or past due date' 
-      });
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
     }
-
-    // TODO: Handle file upload (multer middleware needed)
-    // For now, create a placeholder submission
+    
     const result = await pool.query(
-      `INSERT INTO submissions (assignment_id, student_id, filename, file_path, file_hash)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO submissions (assignment_id, student_id, filename, file_path, file_hash, analysis_status)
+       VALUES ($1, $2, $3, $4, $5, 'pending')
        RETURNING *`,
-      [id, userId, 'placeholder.cpp', '/uploads/placeholder.cpp', 'placeholder_hash']
+      [id, userId, req.file.filename, req.file.path, req.fileHash]
     );
 
-    res.status(201).json({
-      message: 'Submission created successfully',
-      submission: result.rows[0]
-    });
+    res.status(201).json({ message: 'File uploaded successfully', submission: result.rows[0] });
   } catch (error) {
-    console.error('Submit assignment error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Upload failed', error: error.message });
   }
 };

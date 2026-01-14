@@ -43,6 +43,7 @@ app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/courses', require('./routes/courses.routes'));
 app.use('/api/assignments', require('./routes/assignments.routes'));
 app.use('/api/submissions', require('./routes/submissions.routes'));
+app.use('/api/test', require('./routes/test_routes'));
 
 // Error handling
 app.use((err, req, res, next) => {
