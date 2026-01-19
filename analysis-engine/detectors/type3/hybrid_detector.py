@@ -5,6 +5,12 @@ from detectors.type3.winnowing import WinnowingDetector
 from utils.frequency_filter import BatchFrequencyFilter
 from typing import List
 
+#  Summary of Components
+# Tool,Real-World Analogy,Main Purpose
+# Frequency Filter,Noise Cancellation,"Removes the ""Teacher's code"" so it doesn't count as plagiarism."
+# Winnowing,DNA Fingerprinting,"Creates a unique, compressed signature of the student's actual work."
+
+
 class Type3HybridDetector:
     def __init__(self):
         self.tokenizer = CodeTokenizer()
@@ -12,6 +18,7 @@ class Type3HybridDetector:
         self.ast_processor = ASTProcessor()
         self.winnowing = WinnowingDetector(k=5, window_size=4)
         self.freq_filter = BatchFrequencyFilter(threshold=0.7)
+
 
     def prepare_batch(self, all_file_paths: List[str]):
         """
@@ -53,12 +60,12 @@ class Type3HybridDetector:
         metric_score = self.metrics_calc.calculate_similarity(metrics_a, metrics_b)
 
         # FINAL WEIGHTED DECISION
-        # Winnowing: 50% | AST: 40% | Metrics: 10%
-        final_score = (winnowing_score * 0.5) + (ast_score * 0.4) + (metric_score * 0.1)
+        # Winnowing: 30% | AST: 60% | Metrics: 10%
+        final_score = (winnowing_score * 0.3) + (ast_score * 0.6) + (metric_score * 0.1)
         
         return {
             'score': round(float(final_score), 4),
-            'is_clone': bool(final_score >= 0.65), 
+            'is_clone': bool(final_score >= 0.45), 
             'details': {
                 'winnowing_fingerprint_score': round(float(winnowing_score), 4),
                 'ast_skeleton_score': round(float(ast_score), 4),
