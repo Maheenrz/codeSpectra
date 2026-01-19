@@ -23,6 +23,9 @@ class ASTMLAdapter:
     Integrates with ASTProcessor for parsing and provides normalized feature extraction.
     """
     
+    # Number of aggregate metrics added to the feature vector
+    NUM_AGGREGATE_METRICS = 3
+    
     def __init__(self):
         self.ast_processor = ASTProcessor()
         # Define the set of structural node types we care about
@@ -67,7 +70,7 @@ class ASTMLAdapter:
         
         if not structure_seq:
             # Return zero vector if parsing failed
-            return np.zeros(len(self.node_types) + 3)
+            return np.zeros(len(self.node_types) + self.NUM_AGGREGATE_METRICS)
         
         # Parse the structure sequence
         nodes = structure_seq.split()
@@ -147,6 +150,11 @@ class ASTMLAdapter:
         """
         feature_names = self.node_types.copy()
         feature_names.extend(['total_nodes', 'unique_nodes', 'control_flow_nodes'])
+        
+        # Validate that we have the expected number of aggregate metrics
+        assert len(feature_names) == len(self.node_types) + self.NUM_AGGREGATE_METRICS, \
+            "Feature names count mismatch with NUM_AGGREGATE_METRICS"
+        
         return feature_names
     
     def extract_features_with_metadata(self, file_path: str) -> Dict:

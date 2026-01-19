@@ -58,7 +58,7 @@ class PairsTransformer:
         file_path = self.dataset_dir / file_id
         
         if not file_path.exists():
-            print(f"Warning: File {file_path} does not exist. Using zero vector.")
+            print(f"Warning: File {file_id} does not exist in dataset directory {self.dataset_dir}. Using zero vector.")
             features = np.zeros(len(self.adapter.get_feature_names()))
         else:
             features = self.adapter.extract_feature_vector(str(file_path))
