@@ -1,3 +1,4 @@
+# detectors/type3/winnowing.py
 import hashlib
 
 class WinnowingDetector:

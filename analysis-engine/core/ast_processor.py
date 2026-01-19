@@ -52,6 +52,75 @@ class ASTProcessor:
             '.js': 'javascript', '.ts': 'javascript'
         }
 
+    def parse_file(self, file_path: str):
+        """
+        Parse file and return a dict with:
+        - 'root': root_node (tree-sitter)
+        - 'source_bytes': raw bytes
+        - 'source': decoded text (utf-8, ignore errors)
+        - 'lang_key': detected language key ('cpp','python','java','javascript')
+        """
+        abs_path = os.path.abspath(file_path)
+        if not os.path.exists(abs_path):
+            raise FileNotFoundError(abs_path)
+
+        ext = os.path.splitext(abs_path)[1].lower()
+        lang_key = self.ext_map.get(ext)
+        if not lang_key or lang_key not in self.parsers:
+            raise ValueError(f"Unsupported language or parser not loaded for extension {ext}")
+
+        with open(abs_path, "rb") as f:
+            source_bytes = f.read()
+        source = source_bytes.decode("utf-8", errors="ignore")
+
+        parser = self.parsers[lang_key]  # this is a tree-sitter Parser instance you created
+        tree = parser.parse(source_bytes)
+        root = tree.root_node
+        return {'root': root, 'source_bytes': source_bytes, 'source': source, 'lang_key': lang_key}
+
+
+    def extract_functions_from_tree(self, root_node, source_bytes: bytes, lang_key: str):
+        """
+        Walk the tree-sitter root_node and return a list of function dicts:
+        [{'name': <str or None>, 'start': <int line>, 'end': <int line>, 'node': node}, ...]
+        Lines are 1-based.
+        This uses a small set of node.type names per language (may need tuning).
+        """
+        # per-language function node types (add more if needed)
+        func_node_types = {
+            'python': {'function_definition', 'class_definition'},
+            'javascript': {'function_declaration', 'function', 'method_definition'},
+            'java': {'method_declaration', 'constructor_declaration'},
+            'cpp': {'function_definition', 'function_declarator', 'function_definition', 'method_definition'}
+        }
+        types = func_node_types.get(lang_key, {'function_definition'})
+
+        results = []
+        # simple iterative traversal
+        stack = [root_node]
+        while stack:
+            node = stack.pop()
+            if node.type in types:
+                # start_point and end_point are (row, column), row is 0-based
+                start_line = node.start_point[0] + 1
+                end_line = node.end_point[0] + 1
+                # try to get a name if available (search child identifier)
+                name = None
+                for child in node.children:
+                    if child.type in ('identifier', 'name', 'function_name', 'method_identifier'):
+                        try:
+                            name = source_bytes[child.start_byte:child.end_byte].decode('utf-8', errors='ignore')
+                        except Exception:
+                            name = None
+                        break
+                results.append({'name': name, 'start': start_line, 'end': end_line, 'node': node})
+                # do not descend into this function node by default
+                continue
+            # push children
+            for c in reversed(node.children):
+                stack.append(c)
+        return results    
+
     def get_structure_sequence(self, file_path):
         """
         Parses the file and returns a simplified 'Skeleton String' of the logic.
