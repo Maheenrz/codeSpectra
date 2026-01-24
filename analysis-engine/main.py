@@ -430,26 +430,19 @@
 #     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
 
 
-
 """
-CodeSpectra Analysis Engine - Type 1 & Type 3 Hybrid Detection
+CodeSpectra Analysis Engine - Type 1 & Type 3 Hybrid Detection (Batch)
 """
-import os
-import shutil
 import time
 from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import Detectors
 from detectors.type3.hybrid_detector import Type3HybridDetector
 
 app = FastAPI()
-
-# Allow Node.js backend to call this
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -460,66 +453,75 @@ app.add_middleware(
 UPLOAD_DIR = Path("./data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Initialize Detector
-type3_detector = Type3HybridDetector()
+# Initialize Detector (you can tweak thresholds)
+type3_detector = Type3HybridDetector(hybrid_threshold=0.45, ml_threshold=0.50)
 
 @app.post("/api/analyze-type3-batch")
 async def analyze_type3_batch(files: List[UploadFile] = File(...)):
     """
-    1. Receives multiple files (e.g., 30 student submissions).
-    2. Compares EVERY file against EVERY other file.
-    3. Returns sorted Type-3 clone results.
+    1) Receives multiple .cpp files
+    2) Trains batch frequency filter (boilerplate removal)
+    3) Compares every file vs every other file
+    4) Returns both Hybrid and ML results per pair
     """
     print(f"🚀 Starting Batch Analysis for {len(files)} files...")
-    
-    # 1. Save Files
+
+    # 1) Save files
     job_id = f"batch_{int(time.time())}"
     job_dir = UPLOAD_DIR / job_id
     job_dir.mkdir(exist_ok=True)
-    
-    saved_file_paths = []
-    
-    for file in files:
-        file_path = job_dir / file.filename
-        with open(file_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-        saved_file_paths.append(file_path)
 
-    # 2. Run All-vs-All Comparison
+    saved_paths: List[Path] = []
+    for f in files:
+        p = job_dir / f.filename
+        content = await f.read()
+        p.write_bytes(content)
+        saved_paths.append(p)
+
+    # 2) Train frequency filter on full batch for Winnowing
+    type3_detector.prepare_batch(saved_paths)
+
+    # 3) All-vs-All comparisons
     results = []
-    
-    for i in range(len(saved_file_paths)):
-        for j in range(i + 1, len(saved_file_paths)):
-            file_a = saved_file_paths[i]
-            file_b = saved_file_paths[j]
-            
-            # Run Hybrid Detector
-            detection = type3_detector.detect(file_a, file_b)
-            
-            # Only keep results with > 40% similarity to reduce noise
-            if detection['score'] > 0.4:
+    for i in range(len(saved_paths)):
+        for j in range(i + 1, len(saved_paths)):
+            A = saved_paths[i]
+            B = saved_paths[j]
+            out = type3_detector.detect(A, B)  # returns {"hybrid": {...}, "ml": {... or None}}
+
+            # Choose a filter threshold for inclusion (max of available scores)
+            check_scores = [out["hybrid"]["score"]]
+            if out["ml"] is not None:
+                check_scores.append(out["ml"]["score"])
+            include = max(check_scores) > 0.4
+
+            if include:
                 results.append({
-                    "file_a": file_a.name,
-                    "file_b": file_b.name,
-                    "score": detection['score'],
-                    "is_clone": detection['is_clone'],
-                    "details": detection['details']
+                    "file_a": A.name,
+                    "file_b": B.name,
+                    # Hybrid (heuristics)
+                    "hybrid_score": out["hybrid"]["score"],
+                    "hybrid_is_clone": out["hybrid"]["is_clone"],
+                    "winnowing_score": out["hybrid"]["details"]["winnowing_fingerprint_score"],
+                    "ast_score": out["hybrid"]["details"]["ast_skeleton_score"],
+                    "metric_score": out["hybrid"]["details"]["complexity_metric_score"],
+                    # ML (RandomForest on named features)
+                    "ml_score": (out["ml"]["score"] if out["ml"] is not None else None),
+                    "ml_is_clone": (out["ml"]["is_clone"] if out["ml"] is not None else None),
                 })
 
-    # 3. Cleanup & Return
-    # Sort by highest similarity
-    results.sort(key=lambda x: x['score'], reverse=True)
-    
-    # Clean up files after analysis (Optional - comment out to debug)
-    # shutil.rmtree(job_dir)
-    
+    # Sort by strongest signal (prefer ML if present; else hybrid)
+    def sort_key(r):
+        return max([s for s in [r.get("ml_score"), r.get("hybrid_score")] if s is not None])
+
+    results.sort(key=sort_key, reverse=True)
+
     return {
         "status": "success",
-        "total_files": len(saved_file_paths),
-        "comparisons_made": (len(saved_file_paths) * (len(saved_file_paths) - 1)) // 2,
+        "total_files": len(saved_paths),
+        "comparisons_made": (len(saved_paths) * (len(saved_paths) - 1)) // 2,
         "suspicious_pairs": len(results),
-        "results": results
+        "results": results,
     }
 
 if __name__ == "__main__":
