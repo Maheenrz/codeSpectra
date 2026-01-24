@@ -12,23 +12,29 @@ psycopg2-binary
 pydantic
 pydantic-settings
 
-# --- Type 1 & General Utils ---
-# (Hashlib and difflib are built-in Python libraries)
+# --- Testing ---
 pytest
 
-# --- Type 2: Renamed Clones (AST/Parsing) ---
+# --- Parsing / AST (Tree-sitter) ---
 tree-sitter
-# Note: You will need to download language grammars later, 
-# but this library is the core engine.
+# Prebuilt language grammars used directly by ast_processor:
+tree_sitter_cpp
+tree_sitter_java
+tree_sitter_python
+tree_sitter_javascript
+# If the above four are not available on your platform, use this instead and adjust imports:
+# tree_sitter_languages
 
-# --- Type 3: Near-Miss Clones (Fuzzy Matching) ---
-psycopg2-binary
-pygments
-lizard
+# --- ML / Feature Extraction ---
 numpy
 scipy
+scikit-learn
 
-# --- Type 4: Semantic Clones (Metrics & Graphs) ---
+# --- Clones / Analysis Utils ---
+pygments
+lizard
+
+# --- Semantic / Metrics / Graphs ---
 radon
 networkx
 lxml
