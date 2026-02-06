@@ -1,3 +1,4 @@
+# analysis-engine/core/ast_ml_adapter.py
 """
 AST -> ML Adapter with robust C++ name fallback so IDs match pairs.csv (filename.cpp:functionName).
 """
@@ -10,6 +11,7 @@ import hashlib
 import numpy as np
 import re
 import os
+import tempfile
 
 CHAR_RE = re.compile(r"\'(\\.|[^\\'])\'")
 IDENT_RE = re.compile(r'\b[_A-Za-z]\w*\b')
@@ -36,6 +38,7 @@ CPP_FUNC_DEF_RE = re.compile(
     re.MULTILINE | re.VERBOSE
 )
 
+
 @dataclass
 class Unit:
     id: str
@@ -50,6 +53,7 @@ class Unit:
     ast_paths: Optional[List[str]] = None
     features: Optional[Dict[str, Any]] = None
     vector: Optional[np.ndarray] = None
+
 
 class ASTMLAdapter:
     def __init__(self, cache_dir: str = "core_cache", ast_processor: Optional[ASTProcessor] = None):
@@ -73,11 +77,84 @@ class ASTMLAdapter:
             cand = m.group(1)
             if cand and cand not in COMMON_KEYWORDS:
                 names.append(cand)
-        seen = set(); result = []
+        seen = set()
+        result = []
         for n in names:
             if n not in seen:
-                seen.add(n); result.append(n)
+                seen.add(n)
+                result.append(n)
         return result
+
+    def build_unit_from_code_string(
+        self, 
+        code: str, 
+        language: str, 
+        unit_id: str = "temp"
+    ) -> Optional[Unit]:
+        """
+        Build a Unit from raw code string (not file).
+        Used for training on datasets like BigCloneBench.
+        
+        Args:
+            code: Raw source code string
+            language: Programming language ('java', 'cpp', 'python', etc.)
+            unit_id: Identifier for this unit
+        
+        Returns:
+            Unit object or None if parsing fails
+        """
+        # Map language to file extension
+        ext_map = {
+            'java': '.java',
+            'cpp': '.cpp',
+            'c': '.c',
+            'python': '.py',
+            'javascript': '.js',
+        }
+        
+        ext = ext_map.get(language, '.txt')
+        temp_file = None
+        
+        try:
+            # Write to temporary file (Tree-sitter needs file)
+            with tempfile.NamedTemporaryFile(
+                mode='w', 
+                suffix=ext, 
+                delete=False,
+                encoding='utf-8'
+            ) as f:
+                f.write(code)
+                temp_file = f.name
+            
+            # Use existing method to build units from file
+            units = self.build_units_from_file(temp_file)
+            
+            if units and len(units) > 0:
+                # Return the largest unit (usually main function)
+                units.sort(key=lambda u: len(u.code or ""), reverse=True)
+                unit = units[0]
+                unit.id = unit_id  # Override with provided ID
+                return unit
+            
+            # If no functions found, create unit from whole code
+            return Unit(
+                id=unit_id,
+                file_path=temp_file,
+                func_name="whole_file",
+                start_line=1,
+                end_line=code.count('\n') + 1,
+                code=code,
+                ast=None
+            )
+            
+        except Exception as e:
+            print(f"⚠️ Failed to parse code for {unit_id}: {e}")
+            return None
+            
+        finally:
+            # Cleanup temp file
+            if temp_file and os.path.exists(temp_file):
+                os.unlink(temp_file)
 
     def build_units_from_file(self, file_path: str) -> List[Unit]:
         base = os.path.basename(file_path)
@@ -203,6 +280,7 @@ class ASTMLAdapter:
         code = NUM_RE.sub(" NUM ", code)
         id_map: Dict[str, str] = {}
         next_id = 1
+        
         def replace_ident(m):
             nonlocal next_id
             token = m.group(0)
@@ -212,6 +290,7 @@ class ASTMLAdapter:
                 id_map[token] = f"ID{next_id}"
                 next_id += 1
             return id_map[token]
+        
         code = IDENT_RE.sub(replace_ident, code)
         code = re.sub(r'\s+', ' ', code).strip()
         unit.normalized_ast = code
@@ -224,9 +303,11 @@ class ASTMLAdapter:
         tokens = text.split()
         k = 5
         hashes: Set[str] = set()
+        
         if len(tokens) == 0:
             unit.subtree_hashes = hashes
             return hashes
+        
         if len(tokens) < k:
             combined = " ".join(tokens)
             h = hashlib.md5(combined.encode("utf-8")).hexdigest()
@@ -236,20 +317,25 @@ class ASTMLAdapter:
                 gram = " ".join(tokens[i:i+k])
                 h = hashlib.md5(gram.encode("utf-8")).hexdigest()
                 hashes.add(h)
+        
         unit.subtree_hashes = hashes
         return hashes
 
     def extract_ast_paths(self, unit: Unit, max_path_len: int = 6) -> List[str]:
         if not unit.normalized_ast:
             unit = self.normalize_unit(unit)
+        
         text = unit.normalized_ast or unit.code or ""
         tokens = text.split()
         paths: List[str] = []
+        
         if not tokens:
             unit.ast_paths = []
             return []
+        
         L = len(tokens)
         cap = 5000
+        
         for i in range(L):
             max_j = min(L, i + max_path_len + 1)
             for j in range(i + 1, max_j):
@@ -258,49 +344,56 @@ class ASTMLAdapter:
                     break
             if len(paths) >= cap:
                 break
+        
         unit.ast_paths = paths
         return paths
 
     def compute_ast_counts(self, unit: Unit) -> Dict[str, int]:
         if not unit.normalized_ast:
             unit = self.normalize_unit(unit)
+        
         text = unit.normalized_ast or ""
         features: Dict[str, int] = {}
         tokens = text.split()
+        
         features['token_count'] = len(tokens)
         features['if_count'] = text.count(' if ')
         features['for_count'] = text.count(' for ')
         features['while_count'] = text.count(' while ')
         features['return_count'] = text.count(' return ')
-        features['call_approx'] = unit.code.count('(')
+        features['call_approx'] = (unit.code or "").count('(')
+        
         unit.features = unit.features or {}
         unit.features.update(features)
         return features
 
     def vectorize_units(self, units: List[Unit], method: str = "tfidf") -> Tuple[np.ndarray, List[str]]:
         ids = [u.id for u in units]
+        
         if method == "tfidf":
             docs = []
             for u in units:
                 if not u.ast_paths:
                     self.extract_ast_paths(u)
                 docs.append(" ".join(u.ast_paths or []))
+            
             try:
                 from sklearn.feature_extraction.text import TfidfVectorizer
+                vec = TfidfVectorizer(max_features=4096)
+                X = vec.fit_transform(docs).toarray().astype(np.float32)
+                for i, u in enumerate(units):
+                    u.vector = X[i]
+                return X, ids
             except Exception:
                 method = "hashset"
-        if method == "tfidf":
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            vec = TfidfVectorizer(max_features=4096)
-            X = vec.fit_transform(docs).toarray().astype(np.float32)
-            for i, u in enumerate(units):
-                u.vector = X[i]
-            return X, ids
+        
+        # Fallback to simple features
         rows = []
         for u in units:
             hcount = len(u.subtree_hashes) if u.subtree_hashes else 0
             tcount = len((u.normalized_ast or "").split())
             rows.append([float(hcount), float(tcount)])
+        
         X = np.array(rows, dtype=np.float32)
         for i, u in enumerate(units):
             u.vector = X[i]
@@ -311,14 +404,22 @@ class ASTMLAdapter:
         Build named, stable pair-level features for serving.
         """
         # Ensure required fields are present
-        if ua.normalized_ast is None: self.normalize_unit(ua)
-        if ub.normalized_ast is None: self.normalize_unit(ub)
-        if ua.subtree_hashes is None: self.compute_subtree_hashes(ua)
-        if ub.subtree_hashes is None: self.compute_subtree_hashes(ub)
-        if ua.ast_paths is None: self.extract_ast_paths(ua)
-        if ub.ast_paths is None: self.extract_ast_paths(ub)
-        if ua.features is None: self.compute_ast_counts(ua)
-        if ub.features is None: self.compute_ast_counts(ub)
+        if ua.normalized_ast is None:
+            self.normalize_unit(ua)
+        if ub.normalized_ast is None:
+            self.normalize_unit(ub)
+        if ua.subtree_hashes is None:
+            self.compute_subtree_hashes(ua)
+        if ub.subtree_hashes is None:
+            self.compute_subtree_hashes(ub)
+        if ua.ast_paths is None:
+            self.extract_ast_paths(ua)
+        if ub.ast_paths is None:
+            self.extract_ast_paths(ub)
+        if ua.features is None:
+            self.compute_ast_counts(ua)
+        if ub.features is None:
+            self.compute_ast_counts(ub)
 
         # Jaccard on subtree hashes
         A = ua.subtree_hashes or set()
@@ -327,7 +428,7 @@ class ASTMLAdapter:
         union = max(1, len(A | B))
         jaccard = inter / union
 
-        # Cosine on path bags (fit on the two docs to get a stable similarity)
+        # Cosine on path bags
         try:
             from sklearn.feature_extraction.text import TfidfVectorizer
             from sklearn.metrics.pairwise import cosine_similarity
@@ -352,5 +453,4 @@ class ASTMLAdapter:
 
     def uid_for(self, file_path: str, start_line: int, end_line: int) -> str:
         key = f"{os.path.abspath(file_path)}:{start_line}:{end_line}"
-        import hashlib
         return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
