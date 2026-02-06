@@ -30,4 +30,8 @@ Thumbs.db
 .idea/
 
 
-.env
+.env# Large files
+*.joblib
+*.parquet
+analysis-engine/detectors/type3/models/
+analysis-engine/data/bigclonebench/
