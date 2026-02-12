@@ -1,10 +1,9 @@
 
-int sum_array(int* arr, int n) {
-    int total = 0;
-    int* end = arr + n;
-    while (arr < end) {
-        total += *arr;
-        arr++;
+void copy_string(char* dest, const char* src) {
+    while (*src != '\0') {
+        *dest = *src;
+        dest++;
+        src++;
     }
-    return total;
+    *dest = '\0';
 }

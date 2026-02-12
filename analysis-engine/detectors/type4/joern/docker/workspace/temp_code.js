@@ -1,4 +1,4 @@
 
-function sumArray(arr) {
-    return arr.reduce((acc, val) => acc + val, 0);
-}
+const doubleValues = (arr) => {
+    return arr.map(x => x * 2);
+};
