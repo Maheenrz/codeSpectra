@@ -1,3 +1,10 @@
+@import url('https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Only keep things Tailwind can't do: scrollbar + base resets */
 * {
   margin: 0;
   padding: 0;
@@ -5,29 +12,10 @@
 }
 
 body {
-  font-family: 'Roboto', 'Segoe UI', sans-serif;
-  background-color: #f5f5f5;
+  overflow-x: hidden;
 }
 
-#root {
-  min-height: 100vh;
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #f1f1f1;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #555;
-}
+::-webkit-scrollbar       { width: 10px; }
+::-webkit-scrollbar-track { background: #f3f4f6; }
+::-webkit-scrollbar-thumb { background: #9333ea; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #7e22ce; }
