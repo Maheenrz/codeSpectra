@@ -54,8 +54,8 @@ class AnalyzerConfig:
     # Review flags
     review_threshold: float = 0.70
 
-    type1_threshold: float = 0.95
-    type2_threshold: float = 0.70
+    type1_threshold: float = 0.98
+    type2_threshold: float = 0.90
 
 # =============================================================================
 # DATA CLASSES
@@ -276,29 +276,41 @@ class CloneAnalyzer:
     # PAIR ANALYSIS
     # =========================================================================
     
-    def _analyze_pair(self, file_a, file_b, include_details=False):
+    def _analyze_pair(
+        self, 
+        file_a: str, 
+        file_b: str,
+        include_details: bool = False
+    ) -> PairResult:
+        """Analyze a single pair of files"""
+        
         path_a = Path(file_a)
         path_b = Path(file_b)
-
-        # Type 1 — exact clone check
-        t1_raw       = self._type1.detect(str(path_a), str(path_b))
-        type1_score  = t1_raw.get("type1_score", 0.0)
-
-        # Type 2 — renamed variable check (stub until teammate implements)
-        t2_raw       = self._type2.detect(str(path_a), str(path_b))
-        type2_score  = t2_raw.get("type2_score", 0.0)
-
-        # Type 3 — structural (existing)
+        
+        # ── Run Type-1 detection ──────────────────────────────────────────
+        t1_result = self._type1.detect(file_a, file_b)
+        t1_score  = t1_result.get("type1_score", 0.0)
+        
+        # ── Run Type-2 detection ──────────────────────────────────────────
+        t2_result = self._type2.detect(file_a, file_b)
+        t2_score  = t2_result.get("type2_score", 0.0)
+        
+        # ── Run structural (Type-3) analysis ──────────────────────────────
         structural = self._run_structural(path_a, path_b, include_details)
-
-        # Type 4 — semantic (existing)
-        semantic = self._run_semantic(str(file_a), str(file_b), include_details)
-
-        level        = self._get_similarity_level(structural, semantic)
+        
+        # ── Run semantic (Type-4) analysis ────────────────────────────────
+        semantic = self._run_semantic(file_a, file_b, include_details)
+        
+        # Determine similarity level
+        level = self._get_similarity_level(structural, semantic)
+        
+        # Should review?
         needs_review = self._should_review(structural, semantic)
-        summary      = self._generate_summary(structural, semantic, level)
-
-        result = PairResult(
+        
+        # Generate summary
+        summary = self._generate_summary(structural, semantic, level)
+        
+        return PairResult(
             file_a=path_a.name,
             file_b=path_b.name,
             structural=structural,
@@ -306,10 +318,9 @@ class CloneAnalyzer:
             similarity_level=level,
             needs_review=needs_review,
             summary=summary,
+            type1_score=round(t1_score, 4),     # ← NOW POPULATED
+            type2_score=round(t2_score, 4),      # ← NOW POPULATED
         )
-        result.type1_score = round(type1_score, 4)
-        result.type2_score = round(type2_score, 4)
-        return result
 
     def _run_structural(
         self, 
@@ -681,6 +692,10 @@ class CloneAnalyzer:
             "file_a": pair.file_a,
             "file_b": pair.file_b,
             
+            # ── Type-1 & Type-2 scores (NEW — was missing!) ───────────────
+            "type1_score": pair.type1_score,
+            "type2_score": pair.type2_score,
+            
             "structural": {
                 "score": pair.structural.score,
                 "confidence": pair.structural.confidence,
@@ -696,20 +711,6 @@ class CloneAnalyzer:
             "similarity_level": pair.similarity_level,
             "needs_review": pair.needs_review,
             "summary": pair.summary,
-        }
-
-        result["type_scores"] = {
-            "type1": getattr(pair, "type1_score", 0.0),
-            "type2": getattr(pair, "type2_score", 0.0),
-            "type3": pair.structural.score,
-            "type4": pair.semantic.score,
-            "overall": round(
-                getattr(pair, "type1_score", 0.0) * 0.10 +
-                getattr(pair, "type2_score", 0.0) * 0.15 +
-                pair.structural.score * 0.45 +
-                pair.semantic.score   * 0.30,
-                4
-            ),
         }
         
         # Add details if available and requested
@@ -735,7 +736,6 @@ class CloneAnalyzer:
                 }
         
         return result
-
 
 # =============================================================================
 # QUESTION-AWARE CROSS-STUDENT ANALYSIS  (v2.1 addition)
