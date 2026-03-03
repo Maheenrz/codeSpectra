@@ -1,4 +1,9 @@
 // backend/src/controllers/analysis.controller.js
+// ── FIXED v2.1 ──
+//   1. getPairDetail: Fixed double-multiplication on type scores
+//   2. getPairDetail: Added primary_clone_type from matchingBlocks
+//   3. getPairDetail: Null-safe access to meta fields
+
 const path    = require('path');
 const fs      = require('fs');
 const axios   = require('axios');
@@ -44,7 +49,7 @@ class AnalysisController {
     }
   }
 
-  // ── Single submission ─────────────────────────────────────────────────────
+  // ── Single submission ────────────────────��────────────────────────────────
   static async analyzeSubmission(req, res) {
     try {
       const { submissionId } = req.params;
@@ -63,7 +68,6 @@ class AnalysisController {
   static async analyzeAssignment(req, res) {
     try {
       const { assignmentId } = req.params;
-      // Respond immediately — idempotency lock inside AnalysisService prevents duplicates
       res.json({ message: 'Analysis started', assignmentId });
       AnalysisService.analyzeAssignment(assignmentId)
         .catch(err => console.error('[Controller] Batch analysis error:', err.message));
@@ -140,12 +144,11 @@ class AnalysisController {
       const sourceA = readFile(meta.file_a);
       const sourceB = readFile(meta.file_b);
 
-      // Build fragments — use engine fragments if available, else whole-file fallback
+      // Build fragments
       let fragments = [];
       if (meta.fragments && Array.isArray(meta.fragments) && meta.fragments.length > 0) {
         fragments = meta.fragments;
       } else if (sourceA !== null || sourceB !== null) {
-        // Whole-file comparison fragment — this is what shows code in ComparisonView
         fragments = [{
           file_a:       meta.file_a ? path.basename(meta.file_a) : 'File A',
           file_b:       meta.file_b ? path.basename(meta.file_b) : 'File B',
@@ -162,29 +165,47 @@ class AnalysisController {
         }];
       }
 
-      // Normalise scores: DB stores 0-100, frontend expects 0-1
-      const n = v => v != null ? parseFloat((v / 100).toFixed(4)) : 0;
+      // ── FIX #1: Normalise scores correctly ──────────────────────────────
+      // DB stores similarity as 0-100 (percentage).
+      // meta stores scores as 0.0-1.0 (floats from engine).
+      // Frontend expects 0.0-1.0.
+      //
+      // OLD BUG: n(meta.type1_score * 100) → double-converted!
+      //   meta.type1_score is already 0.0-1.0
+      //   Multiplying by 100 then dividing by 100 = same value BUT
+      //   n() does toFixed(4) which truncates precision
+      //
+      // WORSE: if meta.type1_score is undefined, undefined * 100 = NaN
+      //
+      // NEW: Read directly from meta (already 0-1), with safe fallback
+      const safeScore = (v) => {
+        if (v == null || isNaN(v)) return 0;
+        // If the value is > 1, it's stored as percentage, convert to 0-1
+        if (v > 1) return parseFloat((v / 100).toFixed(4));
+        return parseFloat(v.toFixed(4));
+      };
 
       res.json({
-        pair_id:          pair.pair_id,
-        similarity:       n(pair.similarity),
-        clone_type:       pair.clone_type,
-        detected_at:      pair.detected_at,
-        submission_a_id:  pair.submission_a_id,
-        submission_b_id:  pair.submission_b_id,
-        student_a_name:   pair.student_a_name,
-        student_b_name:   pair.student_b_name,
-        student_a_id:     pair.student_a_id,
-        student_b_id:     pair.student_b_id,
-        type1_score:      n(meta.type1_score * 100),
-        type2_score:      n(meta.type2_score * 100),
-        structural_score: n(meta.structural_score * 100),
-        semantic_score:   n(meta.semantic_score * 100),
-        confidence:       meta.confidence ?? 'UNKNOWN',
-        file_a:           meta.file_a ? path.basename(meta.file_a) : null,
-        file_b:           meta.file_b ? path.basename(meta.file_b) : null,
+        pair_id:            pair.pair_id,
+        similarity:         parseFloat((pair.similarity / 100).toFixed(4)),
+        clone_type:         pair.clone_type,
+        primary_clone_type: meta.primary_clone_type || pair.clone_type,  // ← NEW
+        detected_at:        pair.detected_at,
+        submission_a_id:    pair.submission_a_id,
+        submission_b_id:    pair.submission_b_id,
+        student_a_name:     pair.student_a_name,
+        student_b_name:     pair.student_b_name,
+        student_a_id:       pair.student_a_id,
+        student_b_id:       pair.student_b_id,
+        type1_score:        safeScore(meta.type1_score),       // ← FIXED
+        type2_score:        safeScore(meta.type2_score),       // ← FIXED
+        structural_score:   safeScore(meta.structural_score),  // ← FIXED
+        semantic_score:     safeScore(meta.semantic_score),    // ← FIXED
+        confidence:         meta.confidence ?? 'UNKNOWN',
+        file_a:             meta.file_a ? path.basename(meta.file_a) : null,
+        file_b:             meta.file_b ? path.basename(meta.file_b) : null,
         fragments,
-        matching_blocks:  meta,
+        matching_blocks:    meta,
       });
 
     } catch (error) {

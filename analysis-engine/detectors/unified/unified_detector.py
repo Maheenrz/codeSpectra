@@ -1,19 +1,13 @@
 # analysis-engine/detectors/unified/unified_detector.py
 
 """
-Unified Clone Detection Engine
+Unified Clone Detection Engine — FIXED v2.1
 
-Combines Type-3 (structural) and Type-4 (semantic) detection to provide:
-- SEPARATE results for Type-3 and Type-4
-- COMBINED verdict with risk level
-- Teacher-friendly summary with action items
-
-Key Features:
-- Shows both detector results independently
-- Determines clone type (TYPE3, TYPE4, TYPE3_AND_TYPE4, NONE)
-- Calculates risk level (CRITICAL, HIGH, MEDIUM, LOW, NONE)
-- Flags pairs needing teacher review (>= 70% combined)
-- Provides human-readable explanations
+Fixes:
+  1. _process_type3_result uses OR logic for combined score (not AND)
+  2. If ML unavailable, uses hybrid score alone
+  3. _determine_clone_type now uses type1/type2 scores too
+  4. to_dict includes type1_score and type2_score
 """
 
 from typing import List, Dict, Any
@@ -38,19 +32,21 @@ from detectors.type4.type4_detector import Type4Detector
 
 class CloneType(Enum):
     """Primary clone type detected"""
-    TYPE3 = "TYPE3"                     # Structural clone (copy-paste)
-    TYPE4 = "TYPE4"                     # Semantic clone (different code, same behavior)
-    TYPE3_AND_TYPE4 = "TYPE3_AND_TYPE4" # Both detected (strongest evidence)
-    NONE = "NONE"                       # Not a clone
+    TYPE1 = "TYPE1"
+    TYPE2 = "TYPE2"
+    TYPE3 = "TYPE3"
+    TYPE4 = "TYPE4"
+    TYPE3_AND_TYPE4 = "TYPE3_AND_TYPE4"
+    NONE = "NONE"
 
 
 class RiskLevel(Enum):
     """Risk level for plagiarism"""
-    CRITICAL = "CRITICAL"       # Immediate action needed
-    HIGH = "HIGH"               # Strong evidence
-    MEDIUM = "MEDIUM"           # Needs review
-    LOW = "LOW"                 # Minor concern
-    NONE = "NONE"               # No concern
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    NONE = "NONE"
 
 
 class ReviewAction(Enum):
@@ -68,16 +64,16 @@ class ReviewAction(Enum):
 
 THRESHOLDS = {
     'type3': {
-        'clone': 0.50,       # Score >= this = clone detected
-        'high': 0.70,        # Score >= this = HIGH confidence
-        'critical': 0.85,    # Score >= this = CRITICAL
+        'clone': 0.50,
+        'high': 0.70,
+        'critical': 0.85,
     },
     'type4': {
         'clone': 0.60,
         'high': 0.80,
         'critical': 0.90,
     },
-    'teacher_review': 0.70,  # Combined score >= this = needs teacher review
+    'teacher_review': 0.70,
 }
 
 
@@ -123,11 +119,21 @@ class UnifiedResult:
     review_action: str
     explanation: str
     
+    # NEW: individual type scores
+    type1_score: float = 0.0
+    type2_score: float = 0.0
+    primary_clone_type: str = "none"
+    
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON response"""
         return {
             "file_a": self.file_a,
             "file_b": self.file_b,
+            
+            # ── NEW: type1 and type2 scores ──────────────────────────
+            "type1_score": self.type1_score,
+            "type2_score": self.type2_score,
+            "primary_clone_type": self.primary_clone_type,
             
             # Type-3 Results (SEPARATE)
             "type3": {
@@ -153,7 +159,19 @@ class UnifiedResult:
                 "needs_teacher_review": self.needs_teacher_review,
                 "review_action": self.review_action,
                 "explanation": self.explanation,
-            }
+            },
+            
+            # Structural/semantic aliases for frontend compatibility
+            "structural": {
+                "score": self.type3.score,
+                "confidence": self.type3.confidence,
+                "is_similar": self.type3.is_clone,
+            },
+            "semantic": {
+                "score": self.type4.score,
+                "confidence": self.type4.confidence,
+                "is_similar": self.type4.is_clone,
+            },
         }
 
 
@@ -209,10 +227,14 @@ class UnifiedDetector:
         type3_result = self._process_type3_result(type3_raw)
         type4_result = self._process_type4_result(type4_raw)
 
-        # type1/type2 scores feed into combined score
         type1_score = type1_raw.get("type1_score", 0.0)
         type2_score = type2_raw.get("type2_score", 0.0)
 
+        # ── Determine primary clone type using all 4 scores ──────────────
+        primary_clone_type = self._determine_primary_clone_type(
+            type1_score, type2_score, type3_result.score, type4_result.score
+        )
+        
         clone_type    = self._determine_clone_type(type3_result, type4_result)
         risk_level    = self._determine_risk_level(type3_result, type4_result)
         combined_score = (
@@ -224,7 +246,9 @@ class UnifiedDetector:
 
         needs_review   = combined_score >= self.teacher_review_threshold
         review_action  = self._determine_review_action(risk_level)
-        explanation    = self._generate_explanation(type3_result, type4_result, clone_type)
+        explanation    = self._generate_explanation(
+            type3_result, type4_result, clone_type, primary_clone_type
+        )
 
         result = UnifiedResult(
             file_a=file_a.name,
@@ -237,48 +261,35 @@ class UnifiedDetector:
             needs_teacher_review=needs_review,
             review_action=review_action.value,
             explanation=explanation,
+            type1_score=round(type1_score, 4),
+            type2_score=round(type2_score, 4),
+            primary_clone_type=primary_clone_type,
         )
-        # attach type1/2 for callers that want them
-        result.type1_score = round(type1_score, 4)
-        result.type2_score = round(type2_score, 4)
         return result
 
     def detect_batch(self, file_paths: List[str]) -> Dict[str, Any]:
-        """
-        Run unified detection on multiple files.
-        Only compares files of the SAME LANGUAGE (all 4 detector types).
-        """
         from engine.analyzer import build_same_language_pairs
 
         start_time = time.time()
         results: List[UnifiedResult] = []
         n = len(file_paths)
 
-        # Same-language pairs only — mirrors NiCad / PMD behaviour
         same_lang_pairs = build_same_language_pairs(file_paths)
         total_comparisons = len(same_lang_pairs)
 
         print(f"🔍 Comparing {n} files → {total_comparisons} same-language pairs...")
 
-        # Prepare Type-3 batch (frequency filter across ALL files is fine)
         self.type3_detector.prepare_batch([Path(p) for p in file_paths])
-
-        # Clear Type-4 cache for fresh batch
         self.type4_detector.clear_cache()
 
-        # Compare same-language pairs only (Types 1-4 all applied)
         for file_a, file_b in same_lang_pairs:
             result = self.detect(file_a, file_b)
             results.append(result)
         
-        # Sort by risk (CRITICAL first) then by combined score
         risk_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3, 'NONE': 4}
         results.sort(key=lambda x: (risk_order.get(x.risk_level, 5), -x.combined_score))
         
-        # Calculate statistics
         stats = self._calculate_batch_stats(results)
-        
-        # Generate teacher summary
         teacher_summary = self._generate_teacher_summary(results, stats)
         
         processing_time = (time.time() - start_time) * 1000
@@ -297,21 +308,22 @@ class UnifiedDetector:
     # =========================================================================
     
     def _process_type3_result(self, raw: Dict) -> Type3Result:
-        """Process raw Type-3 detector output — FIXED for new hybrid_detector"""
+        """Process raw Type-3 detector output — FIXED"""
         hybrid = raw["hybrid"]
         ml = raw.get("ml")
         
         hybrid_score = hybrid["score"]
-        ml_score = ml["score"] if ml else 0.0
-        combined = (hybrid_score * 0.5) + (ml_score * 0.5)
+        ml_score = ml["score"] if ml else None
         
-        # Use combined score for verdict (not AND logic — old approach was too strict)
+        # ── FIX: Don't average with 0 when ML unavailable ────────────────
+        if ml_score is not None:
+            combined = (hybrid_score * 0.6) + (ml_score * 0.4)
+        else:
+            combined = hybrid_score
+        
         is_clone = bool(combined >= THRESHOLDS['type3']['clone'])
-        
-        # Determine confidence
         confidence = self._get_type3_confidence(combined)
         
-        # Read detail keys that match new hybrid_detector output
         details = hybrid.get("details", {})
         
         return Type3Result(
@@ -320,12 +332,11 @@ class UnifiedDetector:
             confidence=confidence,
             details={
                 "hybrid_score": round(hybrid_score, 4),
-                "ml_score": round(ml_score, 4) if ml else None,
+                "ml_score": round(ml_score, 4) if ml_score is not None else None,
                 "structural_fragment": round(details.get("structural_fragment_score", 0.0), 4),
                 "winnowing": round(details.get("winnowing_fingerprint_score", 0.0), 4),
                 "ast": round(details.get("ast_skeleton_score", 0.0), 4),
                 "metrics": round(details.get("complexity_metric_score", 0.0), 4),
-                # NEW: discrimination info for debugging/logging
                 "discrimination": raw.get("clone_type_discrimination", {}),
             }
         )
@@ -343,7 +354,6 @@ class UnifiedDetector:
         )
     
     def _get_type3_confidence(self, score: float) -> str:
-        """Get Type-3 confidence level"""
         if score >= THRESHOLDS['type3']['critical']:
             return 'CRITICAL'
         elif score >= THRESHOLDS['type3']['high']:
@@ -356,7 +366,6 @@ class UnifiedDetector:
             return 'UNLIKELY'
     
     def _get_type4_confidence(self, score: float) -> str:
-        """Get Type-4 confidence level"""
         if score >= THRESHOLDS['type4']['critical']:
             return 'CRITICAL'
         elif score >= THRESHOLDS['type4']['high']:
@@ -369,23 +378,35 @@ class UnifiedDetector:
             return 'UNLIKELY'
     
     # =========================================================================
-    # VERDICT DETERMINATION
+    # CLONE TYPE DETERMINATION
     # =========================================================================
     
+    def _determine_primary_clone_type(
+        self,
+        type1_score: float,
+        type2_score: float,
+        type3_score: float,
+        type4_score: float,
+    ) -> str:
+        """
+        Same logic as analyzer.py — uses all 4 scores.
+        Priority: Type-1 > Type-2 > Type-3 > Type-4 > none
+        """
+        if type1_score >= 0.95:
+            return "type1"
+        if type2_score >= 0.80:
+            return "type2"
+        if type3_score >= 0.50:
+            return "type3"
+        if type4_score >= 0.60:
+            return "type4"
+        return "none"
+
     def _determine_clone_type(
         self, 
         type3: Type3Result, 
         type4: Type4Result
     ) -> CloneType:
-        """
-        Determine the PRIMARY clone type.
-        
-        Logic:
-        - Both HIGH/CRITICAL → TYPE3_AND_TYPE4 (strongest evidence)
-        - Type3 HIGH only → TYPE3 (structural clone)
-        - Type4 HIGH only → TYPE4 (semantic clone)
-        - Neither HIGH → based on which detected clone
-        """
         type3_high = type3.confidence in ['HIGH', 'CRITICAL']
         type4_high = type4.confidence in ['HIGH', 'CRITICAL']
         
@@ -396,7 +417,6 @@ class UnifiedDetector:
         elif type4_high:
             return CloneType.TYPE4
         elif type3.is_clone and type4.is_clone:
-            # Both detected but not HIGH
             return CloneType.TYPE3_AND_TYPE4
         elif type3.is_clone:
             return CloneType.TYPE3
@@ -410,174 +430,112 @@ class UnifiedDetector:
         type3: Type3Result, 
         type4: Type4Result
     ) -> RiskLevel:
-        """Determine risk level based on both scores."""
-        
-        # If either is CRITICAL
         if type3.confidence == 'CRITICAL' or type4.confidence == 'CRITICAL':
             return RiskLevel.CRITICAL
-        
-        # If both are HIGH
-        if type3.confidence == 'HIGH' and type4.confidence == 'HIGH':
-            return RiskLevel.CRITICAL
-        
-        # If one is HIGH
-        if type3.confidence == 'HIGH' or type4.confidence == 'HIGH':
+        elif type3.confidence == 'HIGH' or type4.confidence == 'HIGH':
             return RiskLevel.HIGH
-        
-        # If both are MEDIUM
-        if type3.confidence == 'MEDIUM' and type4.confidence == 'MEDIUM':
+        elif type3.is_clone or type4.is_clone:
             return RiskLevel.MEDIUM
-        
-        # If one is MEDIUM
-        if type3.confidence == 'MEDIUM' or type4.confidence == 'MEDIUM':
+        elif type3.confidence == 'LOW' or type4.confidence == 'LOW':
             return RiskLevel.LOW
-        
-        return RiskLevel.NONE
+        else:
+            return RiskLevel.NONE
     
-    def _determine_review_action(self, risk: RiskLevel) -> ReviewAction:
-        """Determine what action teacher should take."""
-        
-        action_map = {
-            RiskLevel.CRITICAL: ReviewAction.IMMEDIATE_REVIEW,
-            RiskLevel.HIGH: ReviewAction.SCHEDULED_REVIEW,
-            RiskLevel.MEDIUM: ReviewAction.MANUAL_CHECK,
-            RiskLevel.LOW: ReviewAction.NOTE_ONLY,
-            RiskLevel.NONE: ReviewAction.NO_ACTION,
-        }
-        return action_map.get(risk, ReviewAction.NO_ACTION)
+    def _determine_review_action(self, risk_level: RiskLevel) -> ReviewAction:
+        if risk_level == RiskLevel.CRITICAL:
+            return ReviewAction.IMMEDIATE_REVIEW
+        elif risk_level == RiskLevel.HIGH:
+            return ReviewAction.SCHEDULED_REVIEW
+        elif risk_level == RiskLevel.MEDIUM:
+            return ReviewAction.MANUAL_CHECK
+        elif risk_level == RiskLevel.LOW:
+            return ReviewAction.NOTE_ONLY
+        else:
+            return ReviewAction.NO_ACTION
     
     def _generate_explanation(
         self,
         type3: Type3Result,
         type4: Type4Result,
-        clone_type: CloneType
+        clone_type: CloneType,
+        primary_clone_type: str = "none"
     ) -> str:
-        """Generate human-readable explanation."""
+        type_labels = {
+            "type1": "Type-1 (Exact Copy)",
+            "type2": "Type-2 (Renamed Variables)",
+            "type3": "Type-3 (Structural Clone)",
+            "type4": "Type-4 (Semantic Clone)",
+            "none":  "No significant clone",
+        }
+        primary_label = type_labels.get(primary_clone_type, "Unknown")
         
         if clone_type == CloneType.TYPE3_AND_TYPE4:
             return (
-                f"⚠️ STRONG EVIDENCE: Code is structurally similar (Type-3: {type3.confidence}, "
-                f"score: {type3.score}) AND behaves the same (Type-4: {type4.confidence}, "
-                f"score: {type4.score}). This strongly suggests copy-paste plagiarism."
+                f"⚠️ STRONG EVIDENCE [{primary_label}]: Code is structurally similar "
+                f"(Type-3: {type3.confidence}, score: {type3.score}) AND behaves the same "
+                f"(Type-4: {type4.confidence}, score: {type4.score})."
             )
-        
         elif clone_type == CloneType.TYPE3:
             return (
-                f"📋 STRUCTURAL CLONE: Code structure is similar (Type-3: {type3.confidence}, "
-                f"score: {type3.score}) but semantic behavior differs (Type-4: {type4.confidence}, "
-                f"score: {type4.score}). Could be copied template or partial plagiarism."
+                f"📋 STRUCTURAL CLONE [{primary_label}]: Code structure is similar "
+                f"(Type-3: {type3.confidence}, score: {type3.score})."
             )
-        
         elif clone_type == CloneType.TYPE4:
             return (
-                f"🧠 SEMANTIC CLONE: Code looks different (Type-3: {type3.confidence}, "
-                f"score: {type3.score}) but behaves the same (Type-4: {type4.confidence}, "
-                f"score: {type4.score}). Could be same algorithm independently written, "
-                f"or sophisticated plagiarism with code rewriting."
+                f"🧠 SEMANTIC CLONE [{primary_label}]: Code behaves similarly "
+                f"(Type-4: {type4.confidence}, score: {type4.score})."
             )
-        
         else:
-            return (
-                f"✅ NO SIGNIFICANT CLONE: Type-3: {type3.confidence} (score: {type3.score}), "
-                f"Type-4: {type4.confidence} (score: {type4.score}). "
-                f"No evidence of cloning detected."
-            )
+            return f"✅ No significant clone detected. Primary: {primary_label}"
     
     # =========================================================================
     # BATCH STATISTICS
     # =========================================================================
     
     def _calculate_batch_stats(self, results: List[UnifiedResult]) -> Dict:
-        """Calculate batch statistics."""
-        
-        # Clone type counts
-        clone_counts = {ct.value: 0 for ct in CloneType}
-        for r in results:
-            clone_counts[r.clone_type] += 1
-        
-        # Risk level counts
-        risk_counts = {rl.value: 0 for rl in RiskLevel}
-        for r in results:
-            risk_counts[r.risk_level] += 1
-        
-        # Teacher review count
-        needs_review = sum(1 for r in results if r.needs_teacher_review)
-        
-        # Type-3 specific
-        type3_clones = sum(1 for r in results if r.type3.is_clone)
-        type3_high = sum(1 for r in results if r.type3.confidence in ['HIGH', 'CRITICAL'])
-        
-        # Type-4 specific
-        type4_clones = sum(1 for r in results if r.type4.is_clone)
-        type4_high = sum(1 for r in results if r.type4.confidence in ['HIGH', 'CRITICAL'])
+        if not results:
+            return {"total_pairs": 0}
         
         return {
-            "clone_type_breakdown": clone_counts,
-            "risk_level_breakdown": risk_counts,
-            "needs_teacher_review_count": needs_review,
-            
-            "type3_summary": {
-                "total_clones": type3_clones,
-                "high_confidence": type3_high,
+            "total_pairs": len(results),
+            "clones_detected": sum(1 for r in results if r.clone_type != "NONE"),
+            "needs_review": sum(1 for r in results if r.needs_teacher_review),
+            "risk_breakdown": {
+                "critical": sum(1 for r in results if r.risk_level == "CRITICAL"),
+                "high": sum(1 for r in results if r.risk_level == "HIGH"),
+                "medium": sum(1 for r in results if r.risk_level == "MEDIUM"),
+                "low": sum(1 for r in results if r.risk_level == "LOW"),
             },
-            
-            "type4_summary": {
-                "total_clones": type4_clones,
-                "high_confidence": type4_high,
+            "clone_type_breakdown": {
+                "type1": sum(1 for r in results if r.primary_clone_type == "type1"),
+                "type2": sum(1 for r in results if r.primary_clone_type == "type2"),
+                "type3": sum(1 for r in results if r.primary_clone_type == "type3"),
+                "type4": sum(1 for r in results if r.primary_clone_type == "type4"),
+                "none":  sum(1 for r in results if r.primary_clone_type == "none"),
             },
+            "average_combined_score": round(
+                sum(r.combined_score for r in results) / len(results), 4
+            ),
         }
     
     def _generate_teacher_summary(
         self, 
         results: List[UnifiedResult], 
         stats: Dict
-    ) -> Dict:
-        """Generate summary specifically for teacher review."""
+    ) -> str:
+        n = stats.get("total_pairs", 0)
+        critical = stats.get("risk_breakdown", {}).get("critical", 0)
+        high = stats.get("risk_breakdown", {}).get("high", 0)
         
-        # Get critical and high risk pairs
-        critical_pairs = [
-            {
-                "file_a": r.file_a, 
-                "file_b": r.file_b, 
-                "combined_score": r.combined_score,
-                "clone_type": r.clone_type,
-            }
-            for r in results if r.risk_level == "CRITICAL"
-        ]
-        
-        high_risk_pairs = [
-            {
-                "file_a": r.file_a, 
-                "file_b": r.file_b, 
-                "combined_score": r.combined_score,
-                "clone_type": r.clone_type,
-            }
-            for r in results if r.risk_level == "HIGH"
-        ]
-        
-        # Determine overall concern level
-        critical_count = stats["risk_level_breakdown"]["CRITICAL"]
-        high_count = stats["risk_level_breakdown"]["HIGH"]
-        total = len(results)
-        
-        if critical_count > 0:
-            concern_level = "CRITICAL"
-            message = f"🚨 ALERT: {critical_count} pair(s) require IMMEDIATE review!"
-        elif high_count > total * 0.2:
-            concern_level = "HIGH"
-            message = f"⚠️ WARNING: {high_count} pair(s) show high similarity. Class-wide review recommended."
-        elif high_count > 0:
-            concern_level = "MEDIUM"
-            message = f"📋 NOTICE: {high_count} pair(s) need attention."
+        if critical > 0:
+            return (
+                f"🚨 {critical} CRITICAL pair(s) found out of {n}. "
+                f"Immediate review recommended."
+            )
+        elif high > 0:
+            return (
+                f"⚠️ {high} HIGH-risk pair(s) found out of {n}. "
+                f"Scheduled review recommended."
+            )
         else:
-            concern_level = "LOW"
-            message = "✅ No significant plagiarism concerns detected."
-        
-        return {
-            "concern_level": concern_level,
-            "message": message,
-            "action_required": critical_count > 0 or high_count > 0,
-            "critical_pairs": critical_pairs[:10],  # Top 10
-            "high_risk_pairs": high_risk_pairs[:10],  # Top 10
-            "total_needing_review": stats["needs_teacher_review_count"],
-        }
+            return f"✅ No high-risk pairs found among {n} comparisons."

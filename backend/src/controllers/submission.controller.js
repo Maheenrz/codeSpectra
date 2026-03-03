@@ -1,4 +1,11 @@
-const { Submission, CodeFile, Assignment } = require('../models');
+// backend/src/controllers/submission.controller.js
+// ── FIXED v2.1 ──
+//   1. On re-submission (UPSERT), reset analysis_status → 'pending'
+//      so the student appears in the next analysis run
+//   2. Delete old code_files on re-submission to avoid stale data
+//   3. Added getSubmissionWithAnalysis for the frontend detail view
+
+const { Submission, CodeFile, Assignment, AnalysisResult } = require('../models');
 const crypto = require('crypto');
 const fs = require('fs').promises;
 const fsSync = require('fs');
@@ -61,8 +68,34 @@ class SubmissionController {
         return res.status(404).json({ error: 'Assignment not found' });
       }
 
-      // Create submission record
+      // ── FIX #1: Check for existing submission ────────────────────────
+      // If the student already submitted, we need to:
+      //   a) Delete old code_files from disk and DB
+      //   b) Reset analysis_status to 'pending' so re-analysis picks it up
+      const existingSubmission = await Submission.findByAssignmentAndStudent(assignmentId, studentId);
+      if (existingSubmission) {
+        // Delete old files from disk
+        const oldFiles = await Submission.getFiles(existingSubmission.submission_id);
+        for (const file of oldFiles) {
+          try { await fs.unlink(file.file_path); } catch (_) {}
+          // Also try to clean up extracted directories
+          const extractedDir = file.file_path.replace(path.extname(file.file_path), '_extracted');
+          try { await fs.rm(extractedDir, { recursive: true, force: true }); } catch (_) {}
+        }
+        // Delete old code_files from DB
+        await CodeFile.deleteBySubmission(existingSubmission.submission_id);
+      }
+
+      // Create or update submission record
+      // The Submission.create UPSERT already handles re-submission, but we need
+      // to ensure analysis_status resets to 'pending'
       const submission = await Submission.create(assignmentId, studentId);
+
+      // ── FIX #2: Explicitly reset analysis_status on re-submission ────
+      // The UPSERT in Submission.create doesn't reset analysis_status, so we do it here
+      if (existingSubmission) {
+        await Submission.updateStatus(submission.submission_id, 'pending');
+      }
 
       // ── Resolve final list of code files ────────────────────────────
       // multer gives us the uploaded files. Each may be:
@@ -109,12 +142,13 @@ class SubmissionController {
       }
 
       res.status(201).json({
-        message:          'Submission created successfully',
+        message:          existingSubmission ? 'Submission updated successfully' : 'Submission created successfully',
         submission,
         files:            savedFiles,
         total_files:      savedFiles.length,
         submission_type:  uploadedFiles.some(f => f.originalname.endsWith('.zip'))
                           ? 'zip' : 'files',
+        is_resubmission:  !!existingSubmission,
       });
 
     } catch (error) {
@@ -132,6 +166,33 @@ class SubmissionController {
       }
       const files = await Submission.getFiles(submissionId);
       res.json({ ...submission, files });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get submission', details: error.message });
+    }
+  }
+
+  // ── NEW: Get submission with its analysis results ──────────────────────
+  static async getSubmissionWithAnalysis(req, res) {
+    try {
+      const { submissionId } = req.params;
+      const submission = await Submission.findById(submissionId);
+      if (!submission) {
+        return res.status(404).json({ error: 'Submission not found' });
+      }
+      const files = await Submission.getFiles(submissionId);
+
+      // Try to get analysis results if they exist
+      let analysisResult = null;
+      try {
+        analysisResult = await AnalysisResult.findBySubmission(submissionId);
+      } catch (_) {}
+
+      res.json({
+        ...submission,
+        files,
+        analysis: analysisResult || null,
+        analysis_available: !!analysisResult,
+      });
     } catch (error) {
       res.status(500).json({ error: 'Failed to get submission', details: error.message });
     }

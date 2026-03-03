@@ -1,4 +1,10 @@
 // backend/src/services/analysisService.js
+// ─��� FIXED v2.1 ──
+//   1. _inferCloneType now uses priority cascade (Type-1 > Type-2 > Type-3 > Type-4)
+//      matching the research definitions, not naive max-score
+//   2. matchingBlocks now includes primary_clone_type from engine
+//   3. combined_score fallback uses proper weighting
+
 const axios = require("axios");
 const pool  = require("../config/database");
 const path  = require("path");
@@ -8,8 +14,6 @@ const POLL_INTERVAL_MS  = 3000;
 const MAX_POLL_ATTEMPTS = 100;
 
 // ─── IN-PROCESS LOCK ──────────────────────────────────────────────────────────
-// Prevents duplicate runs when user clicks "Analyze" multiple times.
-// Key = assignmentId string, value = timestamp when run started.
 const _runningJobs = new Map();
 
 class AnalysisService {
@@ -115,7 +119,7 @@ class AnalysisService {
     const clonePairs = results.clone_pairs || results.results || [];
     console.log(`[Analysis] Engine returned ${clonePairs.length} pairs`);
 
-    // ── WIPE OLD RESULTS before saving fresh ones (prevents 3x duplicates) ─
+    // ── WIPE OLD RESULTS before saving fresh ones (prevents duplicates) ─
     await pool.query(`
       DELETE FROM clone_pairs WHERE pair_id IN (
         SELECT cp.pair_id FROM clone_pairs cp
@@ -169,9 +173,20 @@ class AnalysisService {
       if (!subAId || !subBId) return false;
 
       const [loId, hiId] = subAId < subBId ? [subAId, subBId] : [subBId, subAId];
-      const score = pair.combined_score ?? ((pair.structural_score ?? 0) * 0.5 + (pair.semantic_score ?? 0) * 0.5);
+
+      // ── FIX #1: combined_score calculation ──────────────────────────────
+      // Engine scores are 0.0-1.0 floats
+      const t1 = pair.type1_score      ?? 0;
+      const t2 = pair.type2_score      ?? 0;
+      const t3 = pair.structural_score ?? 0;
+      const t4 = pair.semantic_score   ?? 0;
+
+      // Use engine's combined_score if available; otherwise compute properly
+      const score = pair.combined_score ?? Math.max(t1, t2, t3, t4);
       const similarityPct = parseFloat((score * 100).toFixed(2));
-      const cloneType     = AnalysisService._inferCloneType(pair);
+
+      // ── FIX #2: Use priority-cascade clone type ─────────────────────────
+      const cloneType = pair.primary_clone_type || AnalysisService._inferCloneType(pair);
 
       const { rows: [result] } = await pool.query(`
         INSERT INTO analysis_results (
@@ -185,28 +200,30 @@ class AnalysisService {
         RETURNING result_id
       `, [
         loId, similarityPct,
-        parseFloat(((pair.type1_score      ?? 0) * 100).toFixed(2)),
-        parseFloat(((pair.type2_score      ?? 0) * 100).toFixed(2)),
-        parseFloat(((pair.structural_score ?? 0) * 100).toFixed(2)),
-        parseFloat(((pair.semantic_score   ?? 0) * 100).toFixed(2)),
+        parseFloat((t1 * 100).toFixed(2)),
+        parseFloat((t2 * 100).toFixed(2)),
+        parseFloat((t3 * 100).toFixed(2)),
+        parseFloat((t4 * 100).toFixed(2)),
         similarityPct,
         JSON.stringify({ file_a: pair.file_a, file_b: pair.file_b }),
       ]);
 
+      // ── FIX #3: Include primary_clone_type in matchingBlocks ────────────
       const matchingBlocks = {
-        confidence:       pair.confidence       ?? "UNKNOWN",
-        structural_score: pair.structural_score ?? 0,
-        semantic_score:   pair.semantic_score   ?? 0,
-        type1_score:      pair.type1_score      ?? 0,
-        type2_score:      pair.type2_score      ?? 0,
-        combined_score:   score,
-        file_a:           pair.file_a ?? null,   // full /app/uploads/... path
-        file_b:           pair.file_b ?? null,
-        student_a_id:     pair.student_a_id ?? null,
-        student_b_id:     pair.student_b_id ?? null,
-        student_a_name:   subMap[subAId]?.student_name ?? null,
-        student_b_name:   subMap[subBId]?.student_name ?? null,
-        details:          pair.details ?? {},
+        confidence:         pair.confidence         ?? "UNKNOWN",
+        primary_clone_type: cloneType,               // ← NEW: was missing
+        structural_score:   t3,
+        semantic_score:     t4,
+        type1_score:        t1,
+        type2_score:        t2,
+        combined_score:     score,
+        file_a:             pair.file_a ?? null,
+        file_b:             pair.file_b ?? null,
+        student_a_id:       pair.student_a_id ?? null,
+        student_b_id:       pair.student_b_id ?? null,
+        student_a_name:     subMap[subAId]?.student_name ?? null,
+        student_b_name:     subMap[subBId]?.student_name ?? null,
+        details:            pair.details ?? {},
       };
 
       await pool.query(`
@@ -224,13 +241,22 @@ class AnalysisService {
     }
   }
 
+  // ── FIX #4: Priority-cascade clone type (matches research definitions) ──
+  // Roy & Cordy 2007: Type-1 ⊂ Type-2 ⊂ Type-3
+  // A Type-1 clone is ALSO a Type-2 and Type-3, so we report the MOST SPECIFIC type.
+  // Type-4 is orthogonal (semantic), only used when structural scores are low.
   static _inferCloneType(pair) {
-    const t1 = pair.type1_score ?? 0, t2 = pair.type2_score ?? 0;
-    const t3 = pair.structural_score ?? 0, t4 = pair.semantic_score ?? 0;
-    const mx = Math.max(t1, t2, t3, t4);
-    if (mx === 0) return "hybrid";
-    if (mx === t1) return "type1"; if (mx === t2) return "type2";
-    if (mx === t3) return "type3"; return "type4";
+    const t1 = pair.type1_score      ?? 0;
+    const t2 = pair.type2_score      ?? 0;
+    const t3 = pair.structural_score ?? 0;
+    const t4 = pair.semantic_score   ?? 0;
+
+    // Priority cascade: most specific first
+    if (t1 >= 0.95) return "type1";     // Exact copy (whitespace/comments only)
+    if (t2 >= 0.80) return "type2";     // Renamed variables, same structure
+    if (t3 >= 0.50) return "type3";     // Structural modifications
+    if (t4 >= 0.60) return "type4";     // Semantically similar, structurally different
+    return "none";
   }
 
   static async analyzeSubmission(submissionId, files) {

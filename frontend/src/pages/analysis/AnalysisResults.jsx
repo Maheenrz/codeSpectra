@@ -211,7 +211,7 @@ const AnalysisResults = () => {
   };
 
   // ── DEBOUNCED trigger — ignores clicks while already running ─────────────
-  const triggerAnalysis = useCallback(async () => {
+  const lysis = useCallback(async () => {
     if (runningRef.current) {
       console.log('[UI] Analysis already running — ignoring click');
       return;
