@@ -1,419 +1,376 @@
-# analysis-engine/detectors/type3/hybrid_detector.py
-from typing import List, Dict, Any, Optional
-from pathlib import Path
-import sys
+# detectors/type3/hybrid_detector.py
+"""
+Type-3 Hybrid Clone Detector
+=============================
+
+Detection pipeline:
+  1. Winnowing fingerprints  (k=7, Jaccard)   weight: 0.50
+  2. AST skeleton similarity (SequenceMatcher) weight: 0.35
+  3. Complexity metrics      (Euclidean)       weight: 0.15
+  →  hybrid_score = weighted sum of the three
+
+  4. ML model (Random Forest trained on BigCloneBench features)
+
+  5. combined_score = hybrid * 0.50 + ml * 0.50
+     (OR hybrid alone when ML unavailable)
+
+  6. Final verdict = combined_score >= language threshold
+     (previously AND logic — replaced with combined score for better recall)
+
+  7. Extension weight applied as a multiplier:
+     .h/.hpp files are near-identical boilerplate → scored at 0.35×
+"""
+
+from __future__ import annotations
+
 import json
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 import joblib
 import numpy as np
 
+# Ensure package root is on sys.path when run directly
+_DETECTOR_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _DETECTOR_DIR.parents[2]
+sys.path.insert(0, str(_REPO_ROOT / "analysis-engine"))
+
 from core.tokenizer import CodeTokenizer
-from utils.metrics_calculator import MetricsCalculator
 from core.ast_processor import ASTProcessor
-from detectors.type3.winnowing import WinnowingDetector
+from core.ast_ml_adapter import ASTMLAdapter
+from utils.metrics_calculator import MetricsCalculator
 from utils.frequency_filter import BatchFrequencyFilter
 
-DETECTOR_DIR = Path(__file__).resolve().parent
-REPO_ROOT = DETECTOR_DIR.parents[2]
-sys.path.insert(0, str(REPO_ROOT / "analysis-engine"))
-
-from core.ast_ml_adapter import ASTMLAdapter
+from detectors.type3.winnowing import WinnowingDetector, WINNOWING_K
+from detectors.type3.config.extension_weights import get_pair_weight
+from detectors.type3.config.thresholds import get_thresholds, get_confidence
+from detectors.type3.nicad_detector import NiCadDetector
 
 
 class Type3HybridDetector:
     """
-    Hybrid detector with unified model trained on BigCloneBench (Java).
-    Works for: Java, C++, C, Python (transfer learning approach).
-    
-    Detection Strategy:
-    - Combined score = (hybrid * 0.5) + (ml * 0.5)
-    - Uses AND logic: Both hybrid AND ml must agree for high confidence
-    - Provides confidence levels: HIGH, MEDIUM, LOW, UNLIKELY
+    Hybrid Type-3 clone detector with:
+    - Corrected hybrid weights  (winnowing 50%, AST 35%, metrics 15%)
+    - Combined-score final verdict (no more fragile AND logic)
+    - Extension-aware weighting  (.h files discounted)
+    - Language-specific thresholds from config/thresholds.py
     """
-    
-    # Language-specific thresholds (RAISED for better precision)
-    LANGUAGE_THRESHOLDS = {
-        'java': {'hybrid': 0.50, 'ml': 0.60, 'combined': 0.55},
-        'cpp': {'hybrid': 0.50, 'ml': 0.60, 'combined': 0.55},
-        'c': {'hybrid': 0.50, 'ml': 0.60, 'combined': 0.55},
-        'python': {'hybrid': 0.55, 'ml': 0.65, 'combined': 0.60},
-        'javascript': {'hybrid': 0.50, 'ml': 0.60, 'combined': 0.55},
+
+    # Extension → language for threshold lookup
+    _EXT_LANG: dict[str, str] = {
+        ".java": "java",
+        ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp",
+        ".c": "c", ".h": "cpp", ".hpp": "cpp",
+        ".py": "python",
+        ".js": "javascript", ".ts": "javascript",
+        ".jsx": "javascript", ".tsx": "javascript",
     }
-    
-    # Confidence level thresholds
-    CONFIDENCE_LEVELS = {
-        'HIGH': 0.75,      # Very likely a clone
-        'MEDIUM': 0.55,    # Probably a clone, needs review
-        'LOW': 0.40,       # Suspicious, might be coincidence
-        'UNLIKELY': 0.0    # Probably not a clone
-    }
-    
-    def __init__(self, hybrid_threshold: float = 0.50, ml_threshold: float = 0.60):
-        # Heuristic components
-        self.tokenizer = CodeTokenizer()
+
+    def __init__(
+        self,
+        hybrid_threshold: float = 0.50,
+        ml_threshold: float = 0.382,
+    ):
+        # ── Heuristic components ──────────────────────────────────────────
+        self.tokenizer   = CodeTokenizer()
+        self.ast_proc    = ASTProcessor()
         self.metrics_calc = MetricsCalculator()
-        self.ast_processor = ASTProcessor()
-        self.winnowing = WinnowingDetector(k=5, window_size=4)
-        self.freq_filter = BatchFrequencyFilter(threshold=0.7)
-
-        # ML components
-        self.default_hybrid_threshold = hybrid_threshold
-        self.default_ml_threshold = ml_threshold
-        self.default_combined_threshold = 0.55
-        self.adapter = ASTMLAdapter(cache_dir=str(REPO_ROOT / "analysis-engine" / "feature_cache"))
-        self.models_dir = DETECTOR_DIR / "models"
-
-        self.ml_enabled = False
+        self.winnowing   = WinnowingDetector(k=WINNOWING_K, window_size=4)
+        # freq_filter k must match winnowing k so the same k-gram hashes are compared
+        self.freq_filter = BatchFrequencyFilter(threshold=0.70)
+        self.nicad = NiCadDetector(similarity_threshold=0.70, min_fragment_lines=6)
+        # ── ML components ────────────────────────────────────────────────
+        self._adapter    = ASTMLAdapter(
+            cache_dir=str(_REPO_ROOT / "analysis-engine" / "feature_cache")
+        )
+        self._models_dir = _DETECTOR_DIR / "models"
+        self.clf: Any    = None
         self.feature_names: List[str] = []
-        self.clf = None
-        self.language_thresholds = self.LANGUAGE_THRESHOLDS.copy()
+        self.ml_enabled: bool = False
 
-        # Load model
+        # Fallback thresholds (overridden per call via config)
+        self._default_hybrid_threshold   = hybrid_threshold
+        self._default_ml_threshold       = ml_threshold
+        self._default_combined_threshold = 0.44
+
         self._load_model()
-    
-    def _load_model(self):
-        """Load the trained ML model"""
-        
-        # Try unified model first (new approach - trained on BigCloneBench)
-        unified_model = self.models_dir / "type3_unified_model.joblib"
-        unified_names = self.models_dir / "type3_unified_model.names.json"
-        unified_meta = self.models_dir / "type3_unified_model.meta.json"
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Model loading
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _load_model(self) -> None:
+        unified_model  = self._models_dir / "type3_unified_model.joblib"
+        unified_names  = self._models_dir / "type3_unified_model.names.json"
 
         if unified_model.exists() and unified_names.exists():
-            print("✅ Loading unified model (trained on BigCloneBench)")
-            self.clf = joblib.load(unified_model)
+            print("✅ [Type3] Loading unified model (BigCloneBench)")
+            self.clf           = joblib.load(unified_model)
             self.feature_names = json.loads(unified_names.read_text())
-            self.ml_enabled = True
-            
-            # Load metadata but use our improved thresholds
-            if unified_meta.exists():
-                meta = json.loads(unified_meta.read_text())
-                # We don't override thresholds from meta anymore
-                # Using our improved LANGUAGE_THRESHOLDS instead
+            self.ml_enabled    = True
             return
 
-        # Fallback to legacy model
-        legacy_model = self.models_dir / "type3_rf_features.joblib"
-        legacy_names = self.models_dir / "type3_rf_features.names.json"
-        
+        legacy_model = self._models_dir / "type3_rf_features.joblib"
+        legacy_names = self._models_dir / "type3_rf_features.names.json"
         if legacy_model.exists() and legacy_names.exists():
-            print("⚠️ Using legacy model (consider retraining with new pipeline)")
-            self.clf = joblib.load(legacy_model)
+            print("⚠️  [Type3] Using legacy model")
+            self.clf           = joblib.load(legacy_model)
             self.feature_names = json.loads(legacy_names.read_text())
-            self.ml_enabled = True
+            self.ml_enabled    = True
             return
 
-        print("⚠️ No ML model found. Using heuristics only.")
-        self.ml_enabled = False
-    
-    def _detect_language(self, file_path: Path) -> str:
-        """Detect language from file extension"""
-        ext = file_path.suffix.lower()
-        ext_map = {
-            '.java': 'java',
-            '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp',
-            '.c': 'c', '.h': 'c',
-            '.hpp': 'cpp',
-            '.py': 'python',
-            '.js': 'javascript', '.ts': 'javascript',
-        }
-        return ext_map.get(ext, 'cpp')
-    
-    def _get_thresholds(self, language: str) -> dict:
-        """Get language-specific thresholds"""
-        default = {
-            'hybrid': self.default_hybrid_threshold,
-            'ml': self.default_ml_threshold,
-            'combined': self.default_combined_threshold
-        }
-        return self.language_thresholds.get(language, default)
-    
-    def _get_confidence_level(self, combined_score: float) -> str:
-        """Determine confidence level based on combined score"""
-        if combined_score >= self.CONFIDENCE_LEVELS['HIGH']:
-            return 'HIGH'
-        elif combined_score >= self.CONFIDENCE_LEVELS['MEDIUM']:
-            return 'MEDIUM'
-        elif combined_score >= self.CONFIDENCE_LEVELS['LOW']:
-            return 'LOW'
-        else:
-            return 'UNLIKELY'
+        print("⚠️  [Type3] No ML model found — using heuristics only")
 
-    def prepare_batch(self, all_file_paths: List[Path]):
-        """
-        Train the frequency filter on the whole batch to remove common boilerplate.
-        Must be called BEFORE detect() for correct Winnowing behavior.
-        """
+    # ─────────────────────────────────────────────────────────────────────
+    # Helpers
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _detect_language(self, path: Path) -> str:
+        return self._EXT_LANG.get(path.suffix.lower(), "cpp")
+
+    def prepare_batch(self, all_file_paths: List[Path]) -> None:
         all_tokens = [self.tokenizer.tokenize_file(str(p)) for p in all_file_paths]
-        self.freq_filter.train_on_batch(all_tokens)
+        self.freq_filter.train_on_batch(all_tokens, k=WINNOWING_K)
+        self.nicad.prepare_batch([str(p) for p in all_file_paths])
+        
+    # ─────────────────────────────────────────────────────────────────────
+    # Hybrid heuristic scores
+    # ─────────────────────────────────────────────────────────────────────
 
     def _hybrid_scores(self, file_a: Path, file_b: Path) -> Dict[str, float]:
-        """Calculate hybrid heuristic scores"""
         tokens_a = self.tokenizer.tokenize_file(str(file_a))
         tokens_b = self.tokenizer.tokenize_file(str(file_b))
-        
+
         if not tokens_a or not tokens_b:
-            return {"winnowing": 0.0, "ast": 0.0, "metrics": 0.0}
+            return {"winnowing": 0.0, "ast": 0.0, "metrics": 0.0, "nicad": 0.0}
 
-        # Winnowing fingerprints with boilerplate removal
-        set_a = self.winnowing.get_fingerprint(tokens_a)
-        set_b = self.winnowing.get_fingerprint(tokens_b)
-        set_a = {h for h in set_a if h not in self.freq_filter.common_hashes}
-        set_b = {h for h in set_b if h not in self.freq_filter.common_hashes}
-        w_score = float(self.winnowing.calculate_similarity(set_a, set_b))
+        # Winnowing (boilerplate removed)
+        fp_a = self.winnowing.get_fingerprint(tokens_a)
+        fp_b = self.winnowing.get_fingerprint(tokens_b)
+        fp_a = {h for h in fp_a if h not in self.freq_filter.common_hashes}
+        fp_b = {h for h in fp_b if h not in self.freq_filter.common_hashes}
+        w_score = float(self.winnowing.calculate_similarity(fp_a, fp_b))
 
-        # AST skeleton similarity
-        a_score = float(self.ast_processor.calculate_similarity(str(file_a), str(file_b)))
+        # AST skeleton (keyword sequence)
+        a_score = float(self.ast_proc.calculate_similarity(str(file_a), str(file_b)))
 
-        # Complexity metrics similarity
+        # Complexity metrics
         ma = self.metrics_calc.calculate_file_metrics(str(file_a))
         mb = self.metrics_calc.calculate_file_metrics(str(file_b))
         m_score = float(self.metrics_calc.calculate_similarity(ma, mb))
 
-        return {"winnowing": w_score, "ast": a_score, "metrics": m_score}
+        # NiCad fragment-level LCS (NEW — dominant signal)
+        nicad_result = self.nicad.detect(str(file_a), str(file_b))
+        n_score = float(nicad_result["nicad_score"])
 
-    def _select_primary_unit(self, units: List) -> Optional[Any]:
-        """Select the primary/main unit from a list of units"""
+        return {"winnowing": w_score, "ast": a_score, "metrics": m_score, "nicad": n_score}
+
+    # ─────────────────────────────────────────────────────────────────────
+    # ML feature vector
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _select_primary_unit(self, units):
         if not units:
             return None
-            
-        for u in units:
-            try:
-                self.adapter.normalize_unit(u)
-                self.adapter.compute_ast_counts(u)
-            except Exception:
-                pass
-        
-        # Prefer common function names
         preferred = {"maxSubArray", "solve", "solution", "main", "Solution"}
         named = [u for u in units if getattr(u, "func_name", "") in preferred]
-        
-        if named:
-            named.sort(key=lambda x: (x.features or {}).get("token_count", 0), reverse=True)
-            return named[0]
-        
-        # Otherwise return largest unit
-        units.sort(key=lambda x: (x.features or {}).get("token_count", 0), reverse=True)
-        return units[0]
+        pool = named if named else units
+        pool.sort(
+            key=lambda x: (x.features or {}).get("token_count", 0), reverse=True
+        )
+        return pool[0]
 
-    def _ml_vec(self, file_a: Path, file_b: Path) -> Optional[np.ndarray]:
-        """Extract ML feature vector for a pair of files"""
+    def _ml_score(self, file_a: Path, file_b: Path) -> Optional[float]:
+        if not self.ml_enabled or self.clf is None:
+            return None
         try:
-            units_a = self.adapter.build_units_from_file(str(file_a))
-            units_b = self.adapter.build_units_from_file(str(file_b))
-            
+            units_a = self._adapter.build_units_from_file(str(file_a))
+            units_b = self._adapter.build_units_from_file(str(file_b))
             if not units_a or not units_b:
                 return None
-            
+
             ua = self._select_primary_unit(units_a)
             ub = self._select_primary_unit(units_b)
-            
             if ua is None or ub is None:
                 return None
 
-            # Process units
-            self.adapter.normalize_unit(ua)
-            self.adapter.normalize_unit(ub)
-            self.adapter.compute_subtree_hashes(ua)
-            self.adapter.compute_subtree_hashes(ub)
-            self.adapter.extract_ast_paths(ua)
-            self.adapter.extract_ast_paths(ub)
-            self.adapter.compute_ast_counts(ua)
-            self.adapter.compute_ast_counts(ub)
-            
-            # TF-IDF for cosine similarity
-            self.adapter.vectorize_units([ua], method="tfidf")
-            self.adapter.vectorize_units([ub], method="tfidf")
+            for u in (ua, ub):
+                self._adapter.normalize_unit(u)
+                self._adapter.compute_subtree_hashes(u)
+                self._adapter.extract_ast_paths(u)
+                self._adapter.compute_ast_counts(u)
 
-            # Get pair features
-            feats = self.adapter.make_pair_features(ua, ub)
+            self._adapter.vectorize_units([ua], method="tfidf")
+            self._adapter.vectorize_units([ub], method="tfidf")
+
+            feats = self._adapter.make_pair_features(ua, ub)
             fa = ua.features or {}
             fb = ub.features or {}
-            
+
             feature_map = {
-                "jaccard_subtrees": feats.get("jaccard_subtrees", 0.0),
-                "cosine_paths": feats.get("cosine_paths", 0.0),
+                "jaccard_subtrees":     feats.get("jaccard_subtrees", 0.0),
+                "cosine_paths":         feats.get("cosine_paths", 0.0),
                 "abs_token_count_diff": feats.get("abs_token_count_diff", 0.0),
-                "avg_token_count": feats.get("avg_token_count", 0.0),
-                "subtree_count_A": len(ua.subtree_hashes or set()),
-                "subtree_count_B": len(ub.subtree_hashes or set()),
-                "path_count_A": len(ua.ast_paths or []),
-                "path_count_B": len(ub.ast_paths or []),
-                "token_count_A": fa.get("token_count", 0),
-                "token_count_B": fb.get("token_count", 0),
-                "call_approx_A": fa.get("call_approx", 0),
-                "call_approx_B": fb.get("call_approx", 0),
+                "avg_token_count":      feats.get("avg_token_count", 0.0),
+                "subtree_count_A":      len(ua.subtree_hashes or set()),
+                "subtree_count_B":      len(ub.subtree_hashes or set()),
+                "path_count_A":         len(ua.ast_paths or []),
+                "path_count_B":         len(ub.ast_paths or []),
+                "token_count_A":        fa.get("token_count", 0),
+                "token_count_B":        fb.get("token_count", 0),
+                "call_approx_A":        fa.get("call_approx", 0),
+                "call_approx_B":        fb.get("call_approx", 0),
             }
-            
-            # Build vector in correct order
+
             vec = np.array(
                 [float(feature_map.get(n, 0.0)) for n in self.feature_names],
-                dtype=np.float32
-            )
-            return vec
-            
+                dtype=np.float32,
+            ).reshape(1, -1)
+
+            if hasattr(self.clf, "predict_proba"):
+                return float(self.clf.predict_proba(vec)[0][1])
+            return float(self.clf.predict(vec)[0])
+
         except Exception as e:
-            print(f"⚠️ ML feature extraction failed: {e}")
+            print(f"⚠️  [Type3] ML extraction error: {e}")
             return None
 
-    def detect(self, file_path_a: str | Path, file_path_b: str | Path) -> Dict[str, Any]:
-        """
-        Main detection method with language-aware thresholds and combined scoring.
-        
-        Returns:
-            {
-                "hybrid": {"score": float, "is_clone": bool, "details": {...}},
-                "ml": {"score": float, "is_clone": bool, "threshold_used": float},
-                "combined": {"score": float, "is_clone": bool, "confidence": str},
-                "is_clone": bool,  # Final verdict using AND logic
-                "language": str,
-                "thresholds": {"hybrid": float, "ml": float, "combined": float}
-            }
-        """
-        file_a = Path(file_path_a)
-        file_b = Path(file_path_b)
-        
-        # Detect language and get thresholds
-        language = self._detect_language(file_a)
-        thresholds = self._get_thresholds(language)
+    # ─────────────────────────────────────────────────────────────────────
+    # Public API
+    # ─────────────────────────────────────────────────────────────────────
 
-        # Hybrid heuristics
-        h = self._hybrid_scores(file_a, file_b)
-        hybrid_score = (h["winnowing"] * 0.3) + (h["ast"] * 0.6) + (h["metrics"] * 0.1)
-        
+    def detect(
+        self,
+        file_path_a: "str | Path",
+        file_path_b: "str | Path",
+    ) -> Dict[str, Any]:
+        """
+        Compare two files and return a structured detection result.
+
+        Returns:
+        {
+            "hybrid":   {"score": float, "is_clone": bool, "details": {...}},
+            "ml":       {"score": float, "is_clone": bool} | None,
+            "combined": {"score": float, "is_clone": bool, "confidence": str},
+            "is_clone": bool,          ← combined_score >= threshold
+            "language": str,
+            "extension_weight": float, ← pair weight (1.0 for .cpp, 0.35 for .h)
+            "thresholds": {...},
+        }
+        """
+        fa = Path(file_path_a)
+        fb = Path(file_path_b)
+
+        language   = self._detect_language(fa)
+        thresholds = get_thresholds(language)
+        ext_weight = get_pair_weight(str(fa), str(fb))
+
+        # ── Hybrid heuristics ────────────────────────────────────────────
+        h = self._hybrid_scores(fa, fb)
+
+        # FIXED weights: winnowing 50%, AST 35%, metrics 15%, NiCad 70%
+        raw_hybrid = (
+            h["nicad"]    * 0.40   # fragment LCS — most reliable for Type-3
+            + h["winnowing"] * 0.30   # k-gram fingerprinting
+            + h["ast"]       * 0.20   # control-flow skeleton
+            + h["metrics"]   * 0.10   # cyclomatic complexity
+        )
+
+        # Apply extension weight (headers etc. are discounted)
+        hybrid_score = raw_hybrid * ext_weight
+
         hybrid = {
-            "score": round(hybrid_score, 4),
-            "is_clone": bool(hybrid_score >= thresholds['hybrid']),
+            "score":    round(hybrid_score, 4),
+            "is_clone": bool(hybrid_score >= thresholds["hybrid"]),
             "details": {
-                "winnowing_fingerprint_score": round(h["winnowing"], 4),
-                "ast_skeleton_score": round(h["ast"], 4),
-                "complexity_metric_score": round(h["metrics"], 4),
+                "nicad_fragment_score":         round(h["nicad"],     4),
+                "winnowing_fingerprint_score":  round(h["winnowing"], 4),
+                "ast_skeleton_score":           round(h["ast"],       4),
+                "complexity_metric_score":      round(h["metrics"],   4),
+                "extension_weight":             round(ext_weight,      4),
             },
         }
 
-        # ML prediction
-        ml_score = 0.0
-        ml = None
-        if self.ml_enabled and self.clf is not None:
-            vec = self._ml_vec(file_a, file_b)
-            
-            if vec is not None and vec.size > 0:
-                vec = vec.reshape(1, -1)
-                
-                if hasattr(self.clf, "predict_proba"):
-                    ml_score = float(self.clf.predict_proba(vec)[0][1])
-                    ml = {
-                        "score": round(ml_score, 4),
-                        "is_clone": bool(ml_score >= thresholds['ml']),
-                        "threshold_used": thresholds['ml']
-                    }
-                else:
-                    pred = int(self.clf.predict(vec)[0])
-                    ml_score = float(pred)
-                    ml = {
-                        "score": ml_score,
-                        "is_clone": bool(pred == 1),
-                        "threshold_used": thresholds['ml']
-                    }
-
-        # ============================================
-        # COMBINED SCORE (NEW!)
-        # ============================================
-        # Weighted combination of hybrid and ML scores
-        if ml is not None:
-            combined_score = (hybrid_score * 0.5) + (ml_score * 0.5)
+        # ── ML score ─────────────────────────────────────────────────────
+        raw_ml = self._ml_score(fa, fb)
+        if raw_ml is not None:
+            ml_score = raw_ml * ext_weight   # also discount ML by ext weight
+            ml = {
+                "score":          round(ml_score, 4),
+                "is_clone":       bool(ml_score >= thresholds["ml"]),
+                "threshold_used": thresholds["ml"],
+            }
         else:
-            # If ML not available, use only hybrid
-            combined_score = hybrid_score
-        
-        combined_is_clone = bool(combined_score >= thresholds['combined'])
-        confidence = self._get_confidence_level(combined_score)
-        
+            ml_score = None
+            ml = None
+
+        # ── Combined score ───────────────────────────────────────────────
+        if ml_score is not None:
+            combined_score = hybrid_score * 0.50 + ml_score * 0.50
+        else:
+            combined_score = hybrid_score   # ML unavailable → use hybrid alone
+
+        combined_is_clone = bool(combined_score >= thresholds["combined"])
+        confidence        = get_confidence(combined_score)
+
         combined = {
-            "score": round(combined_score, 4),
+            "score":    round(combined_score, 4),
             "is_clone": combined_is_clone,
-            "confidence": confidence
+            "confidence": confidence,
         }
 
-        # ============================================
-        # FINAL VERDICT (Using AND logic for high precision)
-        # ============================================
-        # Clone only if BOTH hybrid AND ml agree (when ml is available)
-        if ml is not None:
-            # AND logic: Both must say it's a clone
-            final_is_clone = hybrid["is_clone"] and ml["is_clone"]
-        else:
-            # If ML not available, use hybrid only
-            final_is_clone = hybrid["is_clone"]
-        
-        # Alternative: Use combined score for final verdict
-        # Uncomment below if you prefer combined score over AND logic
-        # final_is_clone = combined_is_clone
-
         return {
-            "hybrid": hybrid,
-            "ml": ml,
-            "combined": combined,
-            "is_clone": final_is_clone,  # FINAL VERDICT
-            "language": language,
-            "thresholds": thresholds
+            "hybrid":           hybrid,
+            "ml":               ml,
+            "combined":         combined,
+            "is_clone":         combined_is_clone,   # ← combined score, NOT AND logic
+            "language":         language,
+            "extension_weight": round(ext_weight, 4),
+            "thresholds":       thresholds,
         }
 
     def detect_clones(self, all_file_paths: List[str]):
-        """
-        Batch detection for compatibility with detection engine.
-        Returns results sorted by combined score (highest first).
-        """
+        """Batch detection — returns DetectionResultWrapper sorted by score."""
         results = []
         n = len(all_file_paths)
         self.prepare_batch([Path(p) for p in all_file_paths])
 
         for i in range(n):
             for j in range(i + 1, n):
-                file_a = all_file_paths[i]
-                file_b = all_file_paths[j]
-                out = self.detect(file_a, file_b)
-                
-                # Use the final verdict (AND logic)
-                is_clone = out["is_clone"]
-                
-                # Only include if it's a clone OR has medium+ confidence
-                # This allows reviewing suspicious pairs too
+                out = self.detect(all_file_paths[i], all_file_paths[j])
                 combined_score = out["combined"]["score"]
-                confidence = out["combined"]["confidence"]
-                
-                if is_clone or confidence in ['HIGH', 'MEDIUM']:
+                confidence     = out["combined"]["confidence"]
+
+                if out["is_clone"] or confidence in ("HIGH", "MEDIUM"):
                     results.append({
-                        "file_a": file_a,
-                        "file_b": file_b,
-                        "is_clone": is_clone,
-                        "hybrid_score": out["hybrid"]["score"],
-                        "ml_score": out["ml"]["score"] if out["ml"] else None,
+                        "file_a":         all_file_paths[i],
+                        "file_b":         all_file_paths[j],
+                        "is_clone":       out["is_clone"],
+                        "hybrid_score":   out["hybrid"]["score"],
+                        "ml_score":       out["ml"]["score"] if out["ml"] else None,
                         "combined_score": combined_score,
-                        "confidence": confidence,
-                        "language": out["language"],
-                        "details": out["hybrid"]["details"]
+                        "confidence":     confidence,
+                        "language":       out["language"],
+                        "extension_weight": out["extension_weight"],
+                        "details":        out["hybrid"]["details"],
                     })
-        
-        # Sort by combined score (highest first)
+
         results.sort(key=lambda x: x["combined_score"], reverse=True)
-        
         return DetectionResultWrapper(results)
 
-    def get_clone_type(self):
+    def get_clone_type(self) -> str:
         return "type3"
 
 
 class DetectionResultWrapper:
-    """Wrapper for detection results"""
-    def __init__(self, matches):
-        self.clone_groups = matches
-        self.total_clones = len([m for m in matches if m.get("is_clone", False)])
+    def __init__(self, matches: list):
+        self.clone_groups    = matches
+        self.total_clones    = sum(1 for m in matches if m.get("is_clone"))
         self.total_suspicious = len(matches)
-        
-    def get_high_confidence_clones(self):
-        """Get only HIGH confidence clones"""
+
+    def get_high_confidence_clones(self) -> list:
         return [m for m in self.clone_groups if m.get("confidence") == "HIGH"]
-    
-    def get_clones_by_confidence(self, confidence: str):
-        """Get clones by confidence level"""
+
+    def get_clones_by_confidence(self, confidence: str) -> list:
         return [m for m in self.clone_groups if m.get("confidence") == confidence]

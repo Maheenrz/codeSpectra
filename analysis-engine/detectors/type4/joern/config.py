@@ -104,9 +104,9 @@ class SemanticConfig:
     # Language-specific threshold adjustments
     # Some languages need different thresholds due to syntax differences
     language_threshold_adjustments: Dict[str, float] = field(default_factory=lambda: {
-        "python": 0.0,      # Base threshold
+        "python": -0.10,      # Base threshold
         "java": 0.0,        # Base threshold
-        "javascript": -0.05, # Slightly lower (more dynamic)
+        "javascript": -0.10, # Slightly lower (more dynamic)
         "c": 0.05,          # Slightly higher (more structured)
         "cpp": 0.05,        # Slightly higher (more structured)
         "go": 0.0,          # Base threshold

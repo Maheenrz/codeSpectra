@@ -28,12 +28,13 @@ import AssignmentDetail from "./pages/assignments/AssignmentDetail";
 import CreateAssignment from "./pages/assignments/CreateAssignment";
 
 // Submission Pages
-import SubmitAssignment from "./pages/submissions/SubmitAssignment";
+import SubmitWork from "./pages/submissions/SubmitWork";
 import SubmissionDetail from "./pages/submissions/SubmissionDetail";
 
 // Analysis Pages
 import AnalysisResults from "./pages/analysis/AnalysisResults";
-
+import CodeAnalysis from "./pages/analysis/CodeAnalysis";
+import ComparisonView from "./pages/analysis/ComparisonView"; 
 import "./index.css";
 
 function App() {
@@ -114,7 +115,7 @@ function App() {
             path="/submissions/submit"
             element={
               <ProtectedRoute allowedRoles={["student"]}>
-                <SubmitAssignment />
+                <SubmitWork />
               </ProtectedRoute>
             }
           />
@@ -135,6 +136,22 @@ function App() {
                 <AnalysisResults />
               </ProtectedRoute>
             }
+          />
+          <Route
+            path="/analyze"
+            element={
+              <ProtectedRoute allowedRoles={["instructor", "admin"]}>
+                <CodeAnalysis />
+              </ProtectedRoute>
+            }
+          />
+          <Route 
+          path="/analysis/pair/:pairId"
+          element={
+            <ProtectedRoute allowedRoles={["instructor", "admin"]}>
+              <ComparisonView />
+            </ProtectedRoute>
+          }
           />
 
           {/* Catch all */}

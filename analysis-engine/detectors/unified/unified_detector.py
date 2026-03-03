@@ -26,9 +26,11 @@ import sys
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+# NEW:
+from detectors.type1.type1_detector import Type1Detector
+from detectors.type2.type2_detector import Type2Detector
 from detectors.type3.hybrid_detector import Type3HybridDetector
-from detectors.type4.pdg_detector import Type4PDGDetector
-
+from detectors.type4.type4_detector import Type4Detector
 
 # =============================================================================
 # ENUMS
@@ -180,67 +182,51 @@ class UnifiedDetector:
         type4_threshold: float = 0.60,
         teacher_review_threshold: float = 0.70,
     ):
-        """
-        Initialize unified detector.
-        
-        Args:
-            type3_hybrid_threshold: Threshold for Type-3 hybrid score
-            type3_ml_threshold: Threshold for Type-3 ML score
-            type4_threshold: Threshold for Type-4 semantic score
-            teacher_review_threshold: Combined score threshold for teacher review
-        """
-        # Initialize detectors
+        self.type1_detector = Type1Detector()
+        self.type2_detector = Type2Detector()
         self.type3_detector = Type3HybridDetector(
             hybrid_threshold=type3_hybrid_threshold,
-            ml_threshold=type3_ml_threshold
+            ml_threshold=type3_ml_threshold,
         )
-        self.type4_detector = Type4PDGDetector(threshold=type4_threshold)
-        
-        # Store thresholds
+        self.type4_detector = Type4Detector(threshold=type4_threshold)
         self.teacher_review_threshold = teacher_review_threshold
-        
-        print(f"\n{'='*50}")
-        print("✅ Unified Detector Initialized")
-        print(f"{'='*50}")
-        print(f"   Type-3 Hybrid Threshold: {type3_hybrid_threshold}")
-        print(f"   Type-3 ML Threshold: {type3_ml_threshold}")
-        print(f"   Type-4 Threshold: {type4_threshold}")
-        print(f"   Teacher Review Threshold: {teacher_review_threshold}")
-        print(f"{'='*50}\n")
-    
+        print("✅ Unified Detector Initialized (Type 1–4)")
+
     # =========================================================================
     # MAIN DETECTION METHODS
     # =========================================================================
     
     def detect(self, file_path_a: str, file_path_b: str) -> UnifiedResult:
-        """
-        Run unified detection on a pair of files.
-        
-        Returns BOTH Type-3 and Type-4 results separately,
-        plus a combined verdict.
-        """
         file_a = Path(file_path_a)
         file_b = Path(file_path_b)
-        
-        # === Run Type-3 Detection ===
+
+        # Run all 4 detectors
+        type1_raw = self.type1_detector.detect(str(file_a), str(file_b))
+        type2_raw = self.type2_detector.detect(str(file_a), str(file_b))
         type3_raw = self.type3_detector.detect(file_a, file_b)
+        type4_raw = self.type4_detector.detect(str(file_a), str(file_b))
+
         type3_result = self._process_type3_result(type3_raw)
-        
-        # === Run Type-4 Detection ===
-        type4_raw = self.type4_detector.detect(str(file_path_a), str(file_path_b))
         type4_result = self._process_type4_result(type4_raw)
-        
-        # === Determine Combined Verdict ===
-        clone_type = self._determine_clone_type(type3_result, type4_result)
-        risk_level = self._determine_risk_level(type3_result, type4_result)
-        combined_score = (type3_result.score * 0.5) + (type4_result.score * 0.5)
-        
-        # === Teacher Review Decision ===
-        needs_review = combined_score >= self.teacher_review_threshold
-        review_action = self._determine_review_action(risk_level)
-        explanation = self._generate_explanation(type3_result, type4_result, clone_type)
-        
-        return UnifiedResult(
+
+        # type1/type2 scores feed into combined score
+        type1_score = type1_raw.get("type1_score", 0.0)
+        type2_score = type2_raw.get("type2_score", 0.0)
+
+        clone_type    = self._determine_clone_type(type3_result, type4_result)
+        risk_level    = self._determine_risk_level(type3_result, type4_result)
+        combined_score = (
+            type1_score  * 0.10 +
+            type2_score  * 0.15 +
+            type3_result.score * 0.45 +
+            type4_result.score * 0.30
+        )
+
+        needs_review   = combined_score >= self.teacher_review_threshold
+        review_action  = self._determine_review_action(risk_level)
+        explanation    = self._generate_explanation(type3_result, type4_result, clone_type)
+
+        result = UnifiedResult(
             file_a=file_a.name,
             file_b=file_b.name,
             type3=type3_result,
@@ -252,30 +238,38 @@ class UnifiedDetector:
             review_action=review_action.value,
             explanation=explanation,
         )
-    
+        # attach type1/2 for callers that want them
+        result.type1_score = round(type1_score, 4)
+        result.type2_score = round(type2_score, 4)
+        return result
+
     def detect_batch(self, file_paths: List[str]) -> Dict[str, Any]:
         """
         Run unified detection on multiple files.
-        Compares all pairs and returns comprehensive results.
+        Only compares files of the SAME LANGUAGE (all 4 detector types).
         """
+        from engine.analyzer import build_same_language_pairs
+
         start_time = time.time()
         results: List[UnifiedResult] = []
         n = len(file_paths)
-        total_comparisons = (n * (n - 1)) // 2
-        
-        print(f"🔍 Comparing {n} files ({total_comparisons} pairs)...")
-        
-        # Prepare Type-3 batch (frequency filter for boilerplate)
+
+        # Same-language pairs only — mirrors NiCad / PMD behaviour
+        same_lang_pairs = build_same_language_pairs(file_paths)
+        total_comparisons = len(same_lang_pairs)
+
+        print(f"🔍 Comparing {n} files → {total_comparisons} same-language pairs...")
+
+        # Prepare Type-3 batch (frequency filter across ALL files is fine)
         self.type3_detector.prepare_batch([Path(p) for p in file_paths])
-        
+
         # Clear Type-4 cache for fresh batch
         self.type4_detector.clear_cache()
-        
-        # Compare all pairs
-        for i in range(n):
-            for j in range(i + 1, n):
-                result = self.detect(file_paths[i], file_paths[j])
-                results.append(result)
+
+        # Compare same-language pairs only (Types 1-4 all applied)
+        for file_a, file_b in same_lang_pairs:
+            result = self.detect(file_a, file_b)
+            results.append(result)
         
         # Sort by risk (CRITICAL first) then by combined score
         risk_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3, 'NONE': 4}

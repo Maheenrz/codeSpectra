@@ -208,18 +208,26 @@ class SemanticAnalyzer:
     ) -> float:
         """
         Calculate similarity of flow patterns (control or data).
-        This measures: Do both codes have similar FLOW patterns?
-        """
-        if not edges1 and not edges2:
-            return 1.0
-        if not edges1 or not edges2:
-            return 0.0
         
-        # Map node IDs to categories
+        Handle empty flow gracefully
+        """
+        # If BOTH have no edges, they're trivially similar (not 0.0!)
+        if not edges1 and not edges2:
+            return 1.0  # Both empty = identical (no control flow in either)
+        
+        # If one is empty but has simple structure, don't penalize heavily
+        if not edges1 or not edges2:
+            # Check if the non-empty one is also simple (< 3 edges)
+            non_empty = edges1 if edges1 else edges2
+            if len(non_empty) <= 3:
+                return 0.7  # Simple flow vs no flow = moderately similar
+            else:
+                return 0.3  # Complex flow vs no flow = less similar
+        
+        # Original logic for when both have edges...
         id_to_cat1 = {n.id: self._get_semantic_category(n) for n in nodes1}
         id_to_cat2 = {n.id: self._get_semantic_category(n) for n in nodes2}
         
-        # Get edge patterns (category → category)
         patterns1 = Counter()
         for e in edges1:
             src = id_to_cat1.get(e.source_id, 'OTHER')
@@ -232,17 +240,14 @@ class SemanticAnalyzer:
             tgt = id_to_cat2.get(e.target_id, 'OTHER')
             patterns2[(src, tgt)] += 1
         
-        # Calculate pattern distribution similarity
         dist_sim = self._distribution_similarity(patterns1, patterns2)
         
-        # Calculate pattern set similarity (Jaccard)
         set1 = set(patterns1.keys())
         set2 = set(patterns2.keys())
         jaccard = len(set1 & set2) / len(set1 | set2) if (set1 | set2) else 1.0
         
-        # Combine: 60% distribution + 40% Jaccard
         return (dist_sim * 0.6) + (jaccard * 0.4)
-    
+
     def _calculate_structural_similarity(self, pdg1: PDG, pdg2: PDG) -> float:
         """
         Calculate overall structural similarity.

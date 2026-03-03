@@ -1,34 +1,45 @@
 const jwt = require('jsonwebtoken');
 
-exports.authenticate = (req, res, next) => {
-  try {
-    // Get token from header
-    const token = req.header('Authorization')?.replace('Bearer ', '');
+const JWT_SECRET = process.env.JWT_SECRET;
 
-    if (!token) {
-      return res.status(401).json({ message: 'No token, authorization denied' });
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Access token required' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      // 401 so the frontend axios interceptor catches it and redirects to /login
+      return res.status(401).json({ error: 'Invalid or expired token' });
     }
-
-    // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
+    req.user = user;
     next();
-
-  } catch (error) {
-    res.status(401).json({ message: 'Token is not valid' });
-  }
+  });
 };
 
-exports.isInstructor = (req, res, next) => {
-  if (req.user.role !== 'instructor' && req.user.role !== 'admin') {
-    return res.status(403).json({ message: 'Access denied. Instructor only.' });
-  }
-  next();
+const requireRole = (...allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    next();
+  };
 };
 
-exports.isStudent = (req, res, next) => {
-  if (req.user.role !== 'student') {
-    return res.status(403).json({ message: 'Access denied. Student only.' });
-  }
-  next();
+const requireAdmin       = requireRole('admin');
+const requireInstructor  = requireRole('instructor', 'admin');
+const requireAuthenticated = requireRole('student', 'instructor', 'admin');
+
+module.exports = {
+  authenticateToken,
+  requireRole,
+  requireAdmin,
+  requireInstructor,
+  requireAuthenticated,
 };

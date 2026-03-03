@@ -2,6 +2,7 @@
 
 """
 Docker connection manager for Joern container
+CORRECTED VERSION - Includes exec_joern_query method
 """
 
 import subprocess
@@ -14,6 +15,7 @@ try:
     from ..config import get_config, get_docker_config
 except ImportError:
     from config import get_config, get_docker_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -253,6 +255,77 @@ class JoernContainerManager:
         except Exception as e:
             return -1, "", str(e)
     
+    def exec_joern_query(
+        self,
+        file_path: str,
+        language: str,
+        query: str,
+        timeout: int = None,
+    ) -> Optional[str]:
+        """
+        Execute a Joern PDG extraction query on a file.
+
+        Correct Joern workflow:
+          1. joern-parse <file> --language <lang> → creates cpg.bin
+          2. joern --script <script.sc>          → runs query on cpg.bin
+        """
+        if not self.is_container_running():
+            if not self.start_container():
+                logger.error("Failed to start Joern container")
+                return None
+
+        timeout = timeout or self.docker_config.query_timeout
+
+        # Step 1: copy source file into container workspace
+        container_file = f"/workspace/{Path(file_path).name}"
+        if not self.copy_to_container(file_path, container_file):
+            logger.error(f"Failed to copy {file_path} to container")
+            return None
+
+        # Step 2: parse → cpg.bin
+        parse_cmd = [
+            "joern-parse",
+            container_file,
+            "--language", language,
+            "--output", "/workspace/cpg.bin",
+        ]
+        rc, _, stderr = self.execute_command(
+            parse_cmd, timeout=self.docker_config.parse_timeout
+        )
+        if rc != 0:
+            logger.error(f"joern-parse failed: {stderr}")
+            return None
+
+        # Step 3: write Joern script to workspace, then execute
+        # The correct Joern script wraps the user query inside @main
+        joern_script = f"""
+@main def exec() = {{
+  importCpg("/workspace/cpg.bin")
+  {query}
+}}
+""".strip()
+
+        # Write script into container
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".sc", delete=False
+        ) as tmp:
+            tmp.write(joern_script)
+            tmp_script = tmp.name
+
+        self.copy_to_container(tmp_script, "/workspace/query.sc")
+        os.unlink(tmp_script)
+
+        # Execute
+        run_cmd = ["joern", "--script", "/workspace/query.sc"]
+        rc, stdout, stderr = self.execute_command(run_cmd, timeout=timeout)
+
+        if rc != 0:
+            logger.error(f"Joern script failed: {stderr[:300]}")
+            return None
+
+        return stdout
+
     def copy_to_container(self, local_path: str, container_path: str) -> bool:
         """Copy file from host to container"""
         try:

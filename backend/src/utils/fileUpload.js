@@ -1,6 +1,5 @@
 const multer = require('multer');
 const path = require('path');
-const crypto = require('crypto');
 const fs = require('fs');
 
 // Ensure uploads directory exists
@@ -11,37 +10,27 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Configure storage
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    // Create subdirectory based on assignment ID
-    const assignmentId = req.params.id || 'temp';
-    const assignmentDir = path.join(uploadsDir, `assignment_${assignmentId}`);
-    
-    if (!fs.existsSync(assignmentDir)) {
-      fs.mkdirSync(assignmentDir, { recursive: true });
-    }
-    
-    cb(null, assignmentDir);
+  destination: function (req, file, cb) {
+    cb(null, uploadsDir);
   },
-  filename: (req, file, cb) => {
-    // Generate unique filename: studentId_timestamp_originalname
-    const studentId = req.user.user_id;
-    const timestamp = Date.now();
-    const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const filename = `${studentId}_${timestamp}_${sanitizedName}`;
-    
-    cb(null, filename);
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
   }
 });
 
-// File filter - only allow specific code file extensions
+// File filter
 const fileFilter = (req, file, cb) => {
-  const allowedExtensions = ['.cpp', '.c', '.h', '.hpp', '.java', '.py', '.js', '.cs'];
+  const ALLOWED = [
+    '.cpp', '.c', '.h', '.hpp', '.cc', '.cxx',
+    '.java', '.py', '.js', '.jsx', '.ts', '.tsx',
+    '.zip'
+  ];
   const ext = path.extname(file.originalname).toLowerCase();
-  
-  if (allowedExtensions.includes(ext)) {
+  if (ALLOWED.includes(ext)) {
     cb(null, true);
   } else {
-    cb(new Error(`Invalid file type. Allowed: ${allowedExtensions.join(', ')}`), false);
+    cb(new Error(`File type ${ext} not allowed. Allowed: ${ALLOWED.join(', ')}`));
   }
 };
 
@@ -50,20 +39,20 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB max file size
+    fileSize: 100 * 1024 * 1024 // 100MB
   }
 });
 
-// Middleware to calculate file hash after upload
-const calculateHash = (req, res, next) => {
-  if (req.file) {
-    const fileBuffer = fs.readFileSync(req.file.path);
-    req.fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-  }
-  next();
-};
+const uploadZip = multer({
+    storage: storage,
+    fileFilter: (req, file, cb) => {
+        if (path.extname(file.originalname).toLowerCase() === '.zip') {
+            cb(null, true);
+        } else {
+            cb(new Error('Only .zip files allowed on this endpoint'));
+        }
+    },
+    limits: { fileSize: 200 * 1024 * 1024 }
+});
 
-module.exports = {
-  upload,
-  calculateHash
-};
+module.exports = { upload, uploadZip };

@@ -1,324 +1,232 @@
+const { Assignment, AssignmentQuestion } = require('../models');
 const pool = require('../config/database');
-const crypto = require('crypto');
-const path = require('path');
-const fs = require('fs').promises;
 
-// Get all assignments
-exports.getAllAssignments = async (req, res) => {
-  try {
-    const userId = req.user.user_id;
-    const userRole = req.user.role;
+class AssignmentController {
+  // Create new assignment with questions
+  static async createAssignment(req, res) {
+    try {
+      const { questions, ...assignmentData } = req.body;
+      
+      assignmentData.createdBy = req.user.userId;
 
-    let query;
-    if (userRole === 'instructor' || userRole === 'admin') {
-      query = `
-        SELECT a.*, 
-               c.course_code, c.course_name,
-               COUNT(DISTINCT s.submission_id) as submission_count,
-               COUNT(DISTINCT CASE WHEN s.analysis_status = 'completed' THEN s.submission_id END) as analyzed_count
-        FROM assignments a
-        JOIN courses c ON a.course_id = c.course_id
-        LEFT JOIN submissions s ON a.assignment_id = s.assignment_id
-        WHERE c.instructor_id = $1
-        GROUP BY a.assignment_id, c.course_code, c.course_name
-        ORDER BY a.due_date DESC
-      `;
-    } else {
-      query = `
-        SELECT a.*, 
-               c.course_code, c.course_name,
-               s.submission_id, s.analysis_status,
-               s.submitted_at
-        FROM enrollments e
-        JOIN courses c ON e.course_id = c.course_id
-        JOIN assignments a ON c.course_id = a.course_id
-        LEFT JOIN submissions s ON a.assignment_id = s.assignment_id AND s.student_id = $1
-        WHERE e.student_id = $1
-        ORDER BY a.due_date DESC
-      `;
+      // Validate questions if provided
+      if (questions && questions.length > 0) {
+        // Validate each question
+        for (let i = 0; i < questions.length; i++) {
+          const q = questions[i];
+          
+          if (!q.title || !q.description) {
+            return res.status(400).json({ 
+              error: `Question ${i + 1}: Title and description are required` 
+            });
+          }
+          
+          if (!q.maxMarks || q.maxMarks < 0) {
+            return res.status(400).json({ 
+              error: `Question ${i + 1}: Max marks must be a positive number` 
+            });
+          }
+
+          // Parse expectedFiles if string
+          if (typeof q.expectedFiles === 'string') {
+            q.expectedFiles = q.expectedFiles.split(',').map(f => f.trim()).filter(Boolean);
+          }
+
+          // Auto-detect allowed extensions based on primary language if not provided
+          if (!q.allowedExtensions || q.allowedExtensions.length === 0) {
+            q.allowedExtensions = Assignment.getExtensionsForLanguage(
+              assignmentData.primaryLanguage || 'cpp'
+            );
+          } else if (typeof q.allowedExtensions === 'string') {
+            q.allowedExtensions = q.allowedExtensions.split(',').map(e => e.trim());
+          }
+        }
+      }
+
+      // Create assignment with questions
+      const result = await Assignment.createWithQuestions(assignmentData, questions || []);
+
+      res.status(201).json({
+        message: 'Assignment created successfully',
+        assignment: result
+      });
+    } catch (error) {
+      console.error('Create assignment error:', error);
+      res.status(500).json({ error: 'Failed to create assignment', details: error.message });
     }
-
-    const result = await pool.query(query, [userId]);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Get assignments error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
   }
-};
 
-// Create new assignment
-exports.createAssignment = async (req, res) => {
-  try {
-    const {
-      title,
-      description,
-      courseId,
-      dueDate,
-      primaryLanguage = 'cpp',
-      allowedExtensions = '.cpp,.h',
-      maxFileSizeMb = 5,
-      enableType1 = true,
-      enableType2 = true,
-      enableType3 = true,
-      enableType4 = true,
-      enableCrd = true,
-      highSimilarityThreshold = 85,
-      mediumSimilarityThreshold = 70,
-      analysisMode = 'after_deadline',
-      showResultsToStudents = false,
-      generateFeedback = true
-    } = req.body;
+  // Get assignment by ID (with questions)
+  static async getAssignmentById(req, res) {
+    try {
+      const { assignmentId } = req.params;
+      const assignment = await Assignment.findByIdWithQuestions(assignmentId);
 
-    // Verify instructor owns the course
-    const courseCheck = await pool.query(
-      'SELECT * FROM courses WHERE course_id = $1 AND instructor_id = $2',
-      [courseId, req.user.user_id]
-    );
+      if (!assignment) {
+        return res.status(404).json({ error: 'Assignment not found' });
+      }
 
-    if (courseCheck.rows.length === 0) {
-      return res.status(403).json({ message: 'Unauthorized: You do not own this course' });
+      res.json(assignment);
+    } catch (error) {
+      console.error('Get assignment error:', error);
+      res.status(500).json({ error: 'Failed to get assignment', details: error.message });
     }
-
-    const result = await pool.query(
-      `INSERT INTO assignments (
-        course_id, title, description, due_date, primary_language,
-        allowed_extensions, max_file_size_mb, enable_type1, enable_type2,
-        enable_type3, enable_type4, enable_crd, high_similarity_threshold,
-        medium_similarity_threshold, analysis_mode, show_results_to_students,
-        generate_feedback, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-      RETURNING *`,
-      [
-        courseId, title, description, dueDate, primaryLanguage,
-        allowedExtensions, maxFileSizeMb, enableType1, enableType2,
-        enableType3, enableType4, enableCrd, highSimilarityThreshold,
-        mediumSimilarityThreshold, analysisMode, showResultsToStudents,
-        generateFeedback, req.user.user_id
-      ]
-    );
-
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Create assignment error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
   }
-};
 
-// Get single assignment by ID
-exports.getAssignmentById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user.user_id;
-    const userRole = req.user.role;
-
-    let query;
-    if (userRole === 'instructor' || userRole === 'admin') {
-      query = `
-        SELECT a.*, 
-               c.course_code, c.course_name,
-               u.first_name as instructor_first_name,
-               u.last_name as instructor_last_name,
-               COUNT(DISTINCT s.submission_id) as submission_count
-        FROM assignments a
-        JOIN courses c ON a.course_id = c.course_id
-        JOIN users u ON c.instructor_id = u.user_id
-        LEFT JOIN submissions s ON a.assignment_id = s.assignment_id
-        WHERE a.assignment_id = $1 AND c.instructor_id = $2
-        GROUP BY a.assignment_id, c.course_code, c.course_name, u.first_name, u.last_name
-      `;
-    } else {
-      query = `
-        SELECT a.*, 
-               c.course_code, c.course_name,
-               s.submission_id, s.analysis_status,
-               s.submitted_at
-        FROM assignments a
-        JOIN courses c ON a.course_id = c.course_id
-        JOIN enrollments e ON c.course_id = e.course_id
-        LEFT JOIN submissions s ON a.assignment_id = s.assignment_id AND s.student_id = $2
-        WHERE a.assignment_id = $1 AND e.student_id = $2
-      `;
+  // Get assignments for a course
+  static async getCourseAssignments(req, res) {
+    try {
+      const { courseId } = req.params;
+      const assignments = await Assignment.findByCourse(courseId);
+      res.json(assignments);
+    } catch (error) {
+      console.error('Get course assignments error:', error);
+      res.status(500).json({ error: 'Failed to get assignments', details: error.message });
     }
-
-    const result = await pool.query(query, [id, userId]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Assignment not found or unauthorized' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Get assignment error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
   }
-};
 
-// Update assignment
-exports.updateAssignment = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const {
-      title,
-      description,
-      dueDate,
-      primaryLanguage,
-      allowedExtensions,
-      maxFileSizeMb,
-      enableType1,
-      enableType2,
-      enableType3,
-      enableType4,
-      enableCrd,
-      highSimilarityThreshold,
-      mediumSimilarityThreshold,
-      analysisMode,
-      showResultsToStudents,
-      generateFeedback
-    } = req.body;
+  // Update assignment
+  static async updateAssignment(req, res) {
+    try {
+      const { assignmentId } = req.params;
+      const updates = req.body;
 
-    // Verify instructor owns the assignment's course
-    const assignmentCheck = await pool.query(
-      `SELECT c.instructor_id 
-       FROM assignments a
-       JOIN courses c ON a.course_id = c.course_id
-       WHERE a.assignment_id = $1`,
-      [id]
-    );
+      const assignment = await Assignment.update(assignmentId, updates);
+      if (!assignment) {
+        return res.status(404).json({ error: 'Assignment not found' });
+      }
 
-    if (assignmentCheck.rows.length === 0) {
-      return res.status(404).json({ message: 'Assignment not found' });
+      res.json({
+        message: 'Assignment updated successfully',
+        assignment
+      });
+    } catch (error) {
+      console.error('Update assignment error:', error);
+      res.status(500).json({ error: 'Failed to update assignment', details: error.message });
     }
-
-    if (assignmentCheck.rows[0].instructor_id !== req.user.user_id) {
-      return res.status(403).json({ message: 'Unauthorized: You do not own this assignment' });
-    }
-
-    const result = await pool.query(
-      `UPDATE assignments 
-       SET title = COALESCE($1, title),
-           description = COALESCE($2, description),
-           due_date = COALESCE($3, due_date),
-           primary_language = COALESCE($4, primary_language),
-           allowed_extensions = COALESCE($5, allowed_extensions),
-           max_file_size_mb = COALESCE($6, max_file_size_mb),
-           enable_type1 = COALESCE($7, enable_type1),
-           enable_type2 = COALESCE($8, enable_type2),
-           enable_type3 = COALESCE($9, enable_type3),
-           enable_type4 = COALESCE($10, enable_type4),
-           enable_crd = COALESCE($11, enable_crd),
-           high_similarity_threshold = COALESCE($12, high_similarity_threshold),
-           medium_similarity_threshold = COALESCE($13, medium_similarity_threshold),
-           analysis_mode = COALESCE($14, analysis_mode),
-           show_results_to_students = COALESCE($15, show_results_to_students),
-           generate_feedback = COALESCE($16, generate_feedback),
-           updated_at = NOW()
-       WHERE assignment_id = $17
-       RETURNING *`,
-      [
-        title, description, dueDate, primaryLanguage, allowedExtensions,
-        maxFileSizeMb, enableType1, enableType2, enableType3, enableType4,
-        enableCrd, highSimilarityThreshold, mediumSimilarityThreshold,
-        analysisMode, showResultsToStudents, generateFeedback, id
-      ]
-    );
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Update assignment error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
   }
-};
 
-// Delete assignment
-exports.deleteAssignment = async (req, res) => {
-  try {
-    const { id } = req.params;
+  // Delete assignment
+  static async deleteAssignment(req, res) {
+    try {
+      const { assignmentId } = req.params;
 
-    // Verify instructor owns the assignment's course
-    const assignmentCheck = await pool.query(
-      `SELECT c.instructor_id 
-       FROM assignments a
-       JOIN courses c ON a.course_id = c.course_id
-       WHERE a.assignment_id = $1`,
-      [id]
-    );
+      const assignment = await Assignment.delete(assignmentId);
+      if (!assignment) {
+        return res.status(404).json({ error: 'Assignment not found' });
+      }
 
-    if (assignmentCheck.rows.length === 0) {
-      return res.status(404).json({ message: 'Assignment not found' });
+      res.json({ message: 'Assignment deleted successfully' });
+    } catch (error) {
+      console.error('Delete assignment error:', error);
+      res.status(500).json({ error: 'Failed to delete assignment', details: error.message });
     }
-
-    if (assignmentCheck.rows[0].instructor_id !== req.user.user_id) {
-      return res.status(403).json({ message: 'Unauthorized: You do not own this assignment' });
-    }
-
-    await pool.query('DELETE FROM assignments WHERE assignment_id = $1', [id]);
-
-    res.json({ message: 'Assignment deleted successfully' });
-  } catch (error) {
-    console.error('Delete assignment error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
   }
-};
 
-// Get assignment submissions
-exports.getAssignmentSubmissions = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user.user_id;
-    const userRole = req.user.role;
+  // Get submissions for assignment
+  static async getAssignmentSubmissions(req, res) {
+    try {
+      const { assignmentId } = req.params;
+      const submissions = await Assignment.getSubmissions(assignmentId);
+      res.json(submissions);
+    } catch (error) {
+      console.error('Get assignment submissions error:', error);
+      res.status(500).json({ error: 'Failed to get submissions', details: error.message });
+    }
+  }
 
-    let query;
-    if (userRole === 'instructor' || userRole === 'admin') {
-      query = `
-        SELECT s.*, 
-               u.first_name, u.last_name, u.email,
-               COUNT(DISTINCT cr.result_id) as clone_count
+  // ========== QUESTION MANAGEMENT ==========
+
+  // Get question by ID
+  static async getQuestionById(req, res) {
+    try {
+      const { questionId } = req.params;
+      const question = await AssignmentQuestion.findById(questionId);
+
+      if (!question) {
+        return res.status(404).json({ error: 'Question not found' });
+      }
+
+      res.json(question);
+    } catch (error) {
+      console.error('Get question error:', error);
+      res.status(500).json({ error: 'Failed to get question', details: error.message });
+    }
+  }
+
+  // Update question
+  static async updateQuestion(req, res) {
+    try {
+      const { questionId } = req.params;
+      const updates = req.body;
+
+      // Parse array fields if they're strings
+      if (typeof updates.expectedFiles === 'string') {
+        updates.expectedFiles = updates.expectedFiles.split(',').map(f => f.trim()).filter(Boolean);
+      }
+      if (typeof updates.allowedExtensions === 'string') {
+        updates.allowedExtensions = updates.allowedExtensions.split(',').map(e => e.trim());
+      }
+
+      const question = await AssignmentQuestion.update(questionId, updates);
+      
+      if (!question) {
+        return res.status(404).json({ error: 'Question not found' });
+      }
+
+      res.json({
+        message: 'Question updated successfully',
+        question
+      });
+    } catch (error) {
+      console.error('Update question error:', error);
+      res.status(500).json({ error: 'Failed to update question', details: error.message });
+    }
+  }
+
+  // Delete question
+  static async deleteQuestion(req, res) {
+    try {
+      const { questionId } = req.params;
+
+      const question = await AssignmentQuestion.delete(questionId);
+      if (!question) {
+        return res.status(404).json({ error: 'Question not found' });
+      }
+
+      res.json({ message: 'Question deleted successfully' });
+    } catch (error) {
+      console.error('Delete question error:', error);
+      res.status(500).json({ error: 'Failed to delete question', details: error.message });
+    }
+  }
+
+  // Get submissions for a specific question
+  static async getQuestionSubmissions(req, res) {
+    try {
+      const { questionId } = req.params;
+      
+      const query = `
+        SELECT 
+          s.*,
+          u.first_name || ' ' || u.last_name as student_name,
+          u.email as student_email,
+          COUNT(cf.file_id) as file_count
         FROM submissions s
         JOIN users u ON s.student_id = u.user_id
-        LEFT JOIN clone_results cr ON s.submission_id IN (cr.submission1_id, cr.submission2_id)
-        WHERE s.assignment_id = $1
+        LEFT JOIN code_files cf ON s.submission_id = cf.submission_id
+        WHERE s.question_id = $1
         GROUP BY s.submission_id, u.first_name, u.last_name, u.email
         ORDER BY s.submitted_at DESC
       `;
-    } else {
-      query = `
-        SELECT s.*, 
-               COUNT(DISTINCT cr.result_id) as clone_count
-        FROM submissions s
-        LEFT JOIN clone_results cr ON s.submission_id IN (cr.submission1_id, cr.submission2_id)
-        WHERE s.assignment_id = $1 AND s.student_id = $2
-        GROUP BY s.submission_id
-        ORDER BY s.submitted_at DESC
-      `;
+      
+      const result = await pool.query(query, [questionId]);
+      res.json(result.rows);
+    } catch (error) {
+      console.error('Get question submissions error:', error);
+      res.status(500).json({ error: 'Failed to get submissions', details: error.message });
     }
-
-    const result = await pool.query(query, userRole === 'student' ? [id, userId] : [id]);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Get assignment submissions error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
   }
-};
+}
 
-// Student submit assignment
-exports.submitAssignment = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user.user_id;
-
-    if (!req.file) {
-      return res.status(400).json({ message: 'No file uploaded' });
-    }
-    
-    const result = await pool.query(
-      `INSERT INTO submissions (assignment_id, student_id, filename, file_path, file_hash, analysis_status)
-       VALUES ($1, $2, $3, $4, $5, 'pending')
-       RETURNING *`,
-      [id, userId, req.file.filename, req.file.path, req.fileHash]
-    );
-
-    res.status(201).json({ message: 'File uploaded successfully', submission: result.rows[0] });
-  } catch (error) {
-    res.status(500).json({ message: 'Upload failed', error: error.message });
-  }
-};
+module.exports = AssignmentController;

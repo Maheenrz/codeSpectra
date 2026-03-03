@@ -1,20 +1,15 @@
 # detectors/type4/joern/client/__init__.py
-
-"""
-Joern client module
-"""
-
-from .connection import (
+from detectors.type4.joern.client.joern_client import JoernClient, get_joern_client
+from detectors.type4.joern.client.connection import (
     JoernContainerManager,
     DockerConnectionError,
-    get_container_manager
+    get_container_manager,
 )
 
-from .joern_client import JoernClient
-
 __all__ = [
-    'JoernContainerManager',
-    'DockerConnectionError',
-    'get_container_manager',
-    'JoernClient'
+    "JoernClient",
+    "get_joern_client",
+    "JoernContainerManager",
+    "DockerConnectionError",
+    "get_container_manager",
 ]

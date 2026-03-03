@@ -43,3 +43,4 @@ class MetricsCalculator:
         # Normalize to 0-1 score (1 / 1+distance)
         # We add a small epsilon to avoid division by zero if needed, though +1 handles it
         return 1 / (1 + dist)
+    

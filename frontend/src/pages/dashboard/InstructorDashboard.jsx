@@ -146,6 +146,19 @@ const InstructorDashboard = () => {
                 <p className="text-gray-600 text-sm mt-2">Check plagiarism reports</p>
               </Card>
             </Link>
+
+            <Link to="/analyze">
+              <Card hover className="text-center cursor-pointer border-2 border-dashed border-slate-200 hover:border-slate-400">
+                <div className="w-16 h-16 bg-slate-900 rounded-lg mx-auto mb-4 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z" />
+                  </svg>
+                </div>
+                <h3 className="font-bold text-lg">Code Analysis</h3>
+                <p className="text-gray-600 text-sm mt-2">Upload files, detect clones — no assignment needed</p>
+                <span className="inline-block mt-3 text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">Generic Tool</span>
+              </Card>
+            </Link>
           </div>
         </div>
 

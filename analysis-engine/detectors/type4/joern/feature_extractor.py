@@ -100,6 +100,37 @@ class FeatureExtractor:
         
         return features
     
+    def extract_behavioral_signature(self, pdg: PDG) -> Dict:
+        """
+        Extract behavioral patterns (for Stack vs Queue detection)
+        
+        ✅ NEW: Capture access patterns
+        """
+        signatures = []
+        
+        for method in pdg.methods:
+            # Look for access patterns in code
+            for node in method.nodes:
+                code = (node.code or '').lower()
+                
+                # Stack pattern: top-based access
+                if 'top++' in code or '++top' in code:
+                    signatures.append('STACK_PUSH_PATTERN')
+                if 'top--' in code or '--top' in code:
+                    signatures.append('STACK_POP_PATTERN')
+                
+                # Queue pattern: front/rear access
+                if 'rear++' in code or '++rear' in code:
+                    signatures.append('QUEUE_ENQUEUE_PATTERN')
+                if 'front++' in code or '++front' in code:
+                    signatures.append('QUEUE_DEQUEUE_PATTERN')
+        
+        return {
+            'patterns': signatures,
+            'is_stack_like': any('STACK' in s for s in signatures),
+            'is_queue_like': any('QUEUE' in s for s in signatures)
+        }
+    
     def extract_control_flow_features(
         self, 
         nodes: List[PDGNode],

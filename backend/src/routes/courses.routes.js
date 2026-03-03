@@ -1,30 +1,55 @@
 const express = require('express');
 const router = express.Router();
-const courseController = require('../controllers/course.controller');
-const { authenticate, isInstructor } = require('../middleware/auth');
+const CourseController = require('../controllers/course.controller');
+const { authenticateToken, requireInstructor, requireRole } = require('../middleware/auth');
+const { validateCourse } = require('../middleware/validation');
 
 // All routes require authentication
-router.use(authenticate);
+router.use(authenticateToken);
 
-// Get all courses for current user
-router.get('/', courseController.getAllCourses);
+// ========== COURSE CRUD ==========
 
 // Create course (instructor only)
-router.post('/', isInstructor, courseController.createCourse);
+router.post('/', requireInstructor, validateCourse, CourseController.createCourse);
 
-// Get single course
-router.get('/:id', courseController.getCourseById);
+// Get all courses
+router.get('/', CourseController.getAllCourses);
+
+// Get instructor's courses
+router.get('/my-courses', requireInstructor, CourseController.getInstructorCourses);
+
+// Get student's enrolled courses
+router.get('/enrolled', requireRole('student'), CourseController.getStudentCourses);
+
+// Get course by ID
+router.get('/:courseId', CourseController.getCourseById);
 
 // Update course (instructor only)
-router.put('/:id', isInstructor, courseController.updateCourse);
+router.put('/:courseId', requireInstructor, CourseController.updateCourse);
 
 // Delete course (instructor only)
-router.delete('/:id', isInstructor, courseController.deleteCourse);
+router.delete('/:courseId', requireInstructor, CourseController.deleteCourse);
 
-// Get assignments for course
-router.get('/:id/assignments', courseController.getCourseAssignments);
+// ========== ENROLLMENT MANAGEMENT ==========
 
-// Enroll student in course (instructor only)
-router.post('/:id/enroll', isInstructor, courseController.enrollStudent);
+// Get course students
+router.get('/:courseId/students', CourseController.getCourseStudents);
+
+// Manual enrollment by instructor
+router.post('/:courseId/enroll', requireInstructor, CourseController.enrollStudent);
+
+// Unenroll student
+router.delete('/:courseId/students/:studentId', requireInstructor, CourseController.unenrollStudent);
+
+// ========== JOIN CODE ROUTES ==========
+
+// Get course by join code (for preview)
+router.get('/join/:joinCode', CourseController.getCourseByJoinCode);
+
+// Enroll using join code (student self-enrollment)
+router.post('/join', requireRole('student'), CourseController.enrollWithJoinCode);
+
+// Regenerate join code (instructor only)
+router.post('/:courseId/regenerate-code', requireInstructor, CourseController.regenerateJoinCode);
 
 module.exports = router;

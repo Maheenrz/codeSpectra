@@ -1,37 +1,12 @@
 # detectors/type4/joern/joern_detector.py
 
 """
-Joern Type-4 Semantic Clone Detector
+Joern Type-4 Semantic Clone Detector - COMPLETE PIPELINE VERSION
 
-This is the main interface for detecting semantic (Type-4) clones using
-Joern's Program Dependence Graph (PDG) analysis.
+Uses the full detection pipeline:
+  JoernClient → FeatureExtractor → SimilarityMetrics → Decision
 
-Type-4 clones are code fragments that:
-- Perform the SAME functionality
-- Have DIFFERENT implementation
-
-Examples:
-- Recursive vs Iterative algorithms
-- Array vs LinkedList implementations
-- Different design patterns achieving same result
-
-Supported Languages:
-- Python
-- Java
-- JavaScript
-- C
-- C++
-- Go
-- PHP
-
-Usage:
-    from joern import JoernDetector
-    
-    detector = JoernDetector()
-    result = detector.detect(code1, code2, language="python")
-    
-    if result.is_semantic_clone:
-        print(f"Semantic clone found! Similarity: {result.similarity:.1%}")
+This version properly integrates all sophisticated components.
 """
 
 import logging
@@ -40,75 +15,55 @@ from typing import Optional, List, Tuple, Dict, Any
 from pathlib import Path
 
 try:
-    from .client import JoernClient, get_container_manager
-    from .comparators import SemanticAnalyzer
-    from .models import (
-        PDG,
-        SemanticCloneResult,
-        SemanticScores,
-        PDGInfo,
-        ConfidenceLevel,
-        BatchSemanticResult
+    from .client.joern_client import JoernClient
+    from .client.connection import get_container_manager
+    from .feature_extractor import FeatureExtractor, get_feature_extractor
+    from .similarity_metrics import SimilarityMetrics, get_similarity_metrics
+    from .comparators.semantic_analyzer import SemanticAnalyzer
+    from .models.pdg_models import PDG, PDGNode, PDGEdge, EdgeType, NodeType
+    from .models.semantic_result import (
+        SemanticCloneResult, SemanticScores,
+        PDGInfo, ConfidenceLevel, BatchSemanticResult,
     )
     from .config import get_config, get_semantic_config
 except ImportError:
-    from client import JoernClient, get_container_manager
-    from comparators import SemanticAnalyzer
-    from models import (
-        PDG,
-        SemanticCloneResult,
-        SemanticScores,
-        PDGInfo,
-        ConfidenceLevel,
-        BatchSemanticResult
+    from client.joern_client import JoernClient
+    from client.connection import get_container_manager
+    from feature_extractor import FeatureExtractor, get_feature_extractor
+    from similarity_metrics import SimilarityMetrics, get_similarity_metrics
+    from comparators.semantic_analyzer import SemanticAnalyzer
+    from models.pdg_models import PDG, PDGNode, PDGEdge, EdgeType, NodeType
+    from models.semantic_result import (
+        SemanticCloneResult, SemanticScores,
+        PDGInfo, ConfidenceLevel, BatchSemanticResult,
     )
     from config import get_config, get_semantic_config
 
 logger = logging.getLogger(__name__)
 
-
 class JoernDetector:
     """
-    Joern-based Type-4 Semantic Clone Detector
+    Joern-based Type-4 Semantic Clone Detector - COMPLETE VERSION
     
-    Uses Program Dependence Graph (PDG) analysis to detect code clones
-    that have the same functionality but different implementation.
-    
-    Attributes:
-        config: Configuration settings
-        client: Joern client for PDG extraction
-        analyzer: Semantic analyzer for comparison
-    
-    Example:
-        # Basic usage
-        detector = JoernDetector()
-        result = detector.detect(code1, code2, "python")
-        
-        if result.is_semantic_clone:
-            print(f"Clone detected! Similarity: {result.similarity:.1%}")
-        
-        # Quick check
-        if detector.is_semantic_clone(code1, code2, "java"):
-            print("These are semantic clones!")
-        
-        # Get similarity score
-        score = detector.get_similarity(code1, code2, "cpp")
-        print(f"Similarity: {score:.1%}")
+    Full pipeline:
+    1. JoernClient: Extract PDG from code
+    2. FeatureExtractor: Extract multi-level features
+    3. SimilarityMetrics: Compute multiple similarity scores
+    4. SemanticAnalyzer: Make final decision with confidence
     """
     
     def __init__(self, auto_start: bool = True):
-        """
-        Initialize the Joern Detector.
-        
-        Args:
-            auto_start: Automatically start Docker container if not running
-        """
+        """Initialize the complete detection pipeline"""
         self.config = get_config()
         self.semantic_config = get_semantic_config()
+        
+        # Initialize pipeline components
         self.client = JoernClient(auto_start=auto_start)
+        self.feature_extractor = get_feature_extractor()  # ✅ NOW USED
+        self.similarity_metrics = get_similarity_metrics()  # ✅ NOW USED
         self.analyzer = SemanticAnalyzer()
         
-        logger.info("JoernDetector initialized for Type-4 semantic clone detection")
+        logger.info("JoernDetector initialized with FULL pipeline")
         logger.info(f"Supported languages: {', '.join(self.config.joern.supported_languages)}")
     
     def detect(
@@ -118,40 +73,15 @@ class JoernDetector:
         language: str = "python"
     ) -> SemanticCloneResult:
         """
-        Detect if two code snippets are semantic (Type-4) clones.
+        Detect semantic clones using COMPLETE pipeline
         
-        This is the main detection method. It extracts PDGs from both
-        code snippets and analyzes their semantic similarity.
-        
-        Args:
-            code1: First code snippet
-            code2: Second code snippet
-            language: Programming language (python, java, javascript, c, cpp, go, php)
-        
-        Returns:
-            SemanticCloneResult containing:
-                - is_semantic_clone: True if codes are semantic clones
-                - similarity: Overall similarity score (0.0 to 1.0)
-                - confidence: Confidence level (high, medium, low)
-                - scores: Detailed component scores
-        
-        Example:
-            result = detector.detect('''
-                def factorial(n):
-                    if n <= 1: return 1
-                    return n * factorial(n-1)
-            ''', '''
-                def factorial(n):
-                    result = 1
-                    for i in range(1, n+1):
-                        result *= i
-                    return result
-            ''', "python")
-            
-            print(f"Semantic Clone: {result.is_semantic_clone}")
-            print(f"Similarity: {result.similarity:.1%}")
+        Pipeline:
+        1. Extract PDG (JoernClient)
+        2. Extract features (FeatureExtractor)  ← NOW USED
+        3. Compute similarities (SimilarityMetrics)  ← NOW USED
+        4. Make decision (SemanticAnalyzer)
         """
-        logger.info(f"Detecting semantic clones ({language})")
+        logger.info(f"Detecting semantic clones ({language}) - FULL PIPELINE")
         start_time = time.time()
         
         result = SemanticCloneResult(language=language)
@@ -165,50 +95,81 @@ class JoernDetector:
                 result.error_message = f"Unsupported language: {language}. Supported: {supported}"
                 return result
             
-            # Extract PDG from first code
-            logger.info("Extracting PDG from code 1...")
+            # STEP 1: Extract PDG from both codes
+            logger.info("Step 1: Extracting PDGs...")
             pdg1 = self.client.extract_pdg_from_code(code1, language)
-            
             if not pdg1:
                 result.status = "error"
                 result.error_message = "Failed to extract PDG from first code"
                 return result
             
-            result.pdg1_info = self._extract_pdg_info(pdg1)
-            
-            # Extract PDG from second code
-            logger.info("Extracting PDG from code 2...")
             pdg2 = self.client.extract_pdg_from_code(code2, language)
-            
             if not pdg2:
                 result.status = "error"
                 result.error_message = "Failed to extract PDG from second code"
                 return result
             
+            result.pdg1_info = self._extract_pdg_info(pdg1)
             result.pdg2_info = self._extract_pdg_info(pdg2)
             
-            # Analyze semantic similarity
-            logger.info("Analyzing semantic similarity...")
+            # ✅ STEP 2: Extract features (NEW - now actually used!)
+            logger.info("Step 2: Extracting features...")
+            features1 = self.feature_extractor.extract_all_features(pdg1, language)
+            features2 = self.feature_extractor.extract_all_features(pdg2, language)
+            
+            # ✅ Check behavioral patterns (Stack vs Queue detection)
+            behavioral1 = self.feature_extractor.extract_behavioral_signature(pdg1)
+            behavioral2 = self.feature_extractor.extract_behavioral_signature(pdg2)
+            
+            # ✅ STEP 3: Compute similarities (NEW - now actually used!)
+            logger.info("Step 3: Computing similarities...")
+            similarities = self.similarity_metrics.compute_all_similarities(
+                features1,
+                features2
+            )
+            
+            # ✅ Apply behavioral penalty (Stack vs Queue)
+            if behavioral1['is_stack_like'] and behavioral2['is_queue_like']:
+                logger.info("Detected Stack vs Queue - applying penalty")
+                similarities['structural_similarity'] *= 0.5
+            elif behavioral1['is_queue_like'] and behavioral2['is_stack_like']:
+                logger.info("Detected Queue vs Stack - applying penalty")
+                similarities['structural_similarity'] *= 0.5
+            
+            # STEP 4: Analyze using SemanticAnalyzer (for backward compatibility)
+            logger.info("Step 4: Final analysis...")
             scores, confidence = self.analyzer.analyze(pdg1, pdg2, language)
             
-            result.scores = scores
-            result.similarity = scores.overall
+            # ✅ Override scores with multi-metric computation
+            weighted_sim = self.similarity_metrics.compute_weighted_similarity(similarities)
+            
+            # Blend both approaches (for robustness)
+            final_similarity = (weighted_sim * 0.6) + (scores.overall * 0.4)
+            
+            result.scores = SemanticScores(
+                overall=final_similarity,
+                node_type_similarity=similarities.get('ast_similarity', scores.node_type_similarity),
+                control_flow_similarity=similarities.get('control_flow_similarity', scores.control_flow_similarity),
+                data_flow_similarity=similarities.get('data_flow_similarity', scores.data_flow_similarity),
+                structural_similarity=similarities.get('structural_similarity', scores.structural_similarity)
+            )
+            result.similarity = final_similarity
             result.confidence = confidence
             
-            # Determine if semantic clone based on threshold
+            # Determine if semantic clone
             threshold = self.config.get_threshold_for_language(language)
-            result.is_semantic_clone = scores.overall >= threshold
+            result.is_semantic_clone = final_similarity >= threshold
             
             result.status = "success"
             
             logger.info(
-                f"Detection complete - Is Semantic Clone: {result.is_semantic_clone}, "
+                f"Detection complete - Clone: {result.is_semantic_clone}, "
                 f"Similarity: {result.similarity:.1%}, "
                 f"Confidence: {confidence.value}"
             )
             
         except Exception as e:
-            logger.error(f"Error during detection: {e}")
+            logger.error(f"Error during detection: {e}", exc_info=True)
             result.status = "error"
             result.error_message = str(e)
         

@@ -20,7 +20,7 @@ Author: CodeSpectra Team
 Version: 2.0.0
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 from dataclasses import dataclass, field
 import time
@@ -54,6 +54,8 @@ class AnalyzerConfig:
     # Review flags
     review_threshold: float = 0.70
 
+    type1_threshold: float = 0.95
+    type2_threshold: float = 0.70
 
 # =============================================================================
 # DATA CLASSES
@@ -109,6 +111,8 @@ class PairResult:
     similarity_level: str  # HIGH, MEDIUM, LOW, NONE
     needs_review: bool
     summary: str
+    type1_score: float = 0.0
+    type2_score: float = 0.0
 
 
 @dataclass
@@ -157,19 +161,19 @@ class CloneAnalyzer:
         print(f"{'='*60}\n")
     
     def _init_detectors(self):
-        """Initialize internal detectors"""
+        from detectors.type1.type1_detector import Type1Detector
+        from detectors.type2.type2_detector import Type2Detector
         from detectors.type3.hybrid_detector import Type3HybridDetector
-        from detectors.type4.pdg_detector import Type4PDGDetector
-        
+        from detectors.type4.type4_detector import Type4Detector
+
+        self._type1      = Type1Detector()
+        self._type2      = Type2Detector()
         self._structural = Type3HybridDetector(
             hybrid_threshold=self.config.structural_threshold,
-            ml_threshold=self.config.ml_threshold
+            ml_threshold=self.config.ml_threshold,
         )
-        
-        self._semantic = Type4PDGDetector(
-            threshold=self.config.semantic_threshold
-        )
-    
+        self._semantic = Type4Detector(threshold=self.config.semantic_threshold)
+
     # =========================================================================
     # MAIN ANALYSIS METHODS
     # =========================================================================
@@ -192,26 +196,24 @@ class CloneAnalyzer:
         """
         start_time = time.time()
         n = len(file_paths)
-        total_comparisons = (n * (n - 1)) // 2
-        
-        print(f"📊 Analyzing {n} files ({total_comparisons} comparisons)...")
+
+        # Build same-language pairs FIRST so we report the true count
+        same_lang_pairs = build_same_language_pairs(file_paths)
+        total_comparisons = len(same_lang_pairs)
+
+        print(f"📊 Analyzing {n} files ({total_comparisons} same-language pairs)...")
         print(f"   Mode: {'Detailed' if detailed else 'Summary'}")
-        
-        # Prepare detectors
+
+        # Prepare detectors (frequency filter benefits from seeing all files)
         self._structural.prepare_batch([Path(p) for p in file_paths])
         self._semantic.clear_cache()
-        
-        # Analyze all pairs
+
+        # Analyze only same-language pairs (Type-1 through Type-4)
         pairs: List[PairResult] = []
         
-        for i in range(n):
-            for j in range(i + 1, n):
-                pair = self._analyze_pair(
-                    file_paths[i], 
-                    file_paths[j], 
-                    include_details=detailed
-                )
-                pairs.append(pair)
+        for file_a, file_b in same_lang_pairs:
+            pair = self._analyze_pair(file_a, file_b, include_details=detailed)
+            pairs.append(pair)
         
         # Class-wide analysis
         class_analysis = self._analyze_class(pairs)
@@ -274,42 +276,41 @@ class CloneAnalyzer:
     # PAIR ANALYSIS
     # =========================================================================
     
-    def _analyze_pair(
-        self, 
-        file_a: str, 
-        file_b: str,
-        include_details: bool = False
-    ) -> PairResult:
-        """Analyze a single pair of files"""
-        
+    def _analyze_pair(self, file_a, file_b, include_details=False):
         path_a = Path(file_a)
         path_b = Path(file_b)
-        
-        # Run structural analysis
+
+        # Type 1 — exact clone check
+        t1_raw       = self._type1.detect(str(path_a), str(path_b))
+        type1_score  = t1_raw.get("type1_score", 0.0)
+
+        # Type 2 — renamed variable check (stub until teammate implements)
+        t2_raw       = self._type2.detect(str(path_a), str(path_b))
+        type2_score  = t2_raw.get("type2_score", 0.0)
+
+        # Type 3 — structural (existing)
         structural = self._run_structural(path_a, path_b, include_details)
-        
-        # Run semantic analysis
-        semantic = self._run_semantic(file_a, file_b, include_details)
-        
-        # Determine similarity level
-        level = self._get_similarity_level(structural, semantic)
-        
-        # Should review?
+
+        # Type 4 — semantic (existing)
+        semantic = self._run_semantic(str(file_a), str(file_b), include_details)
+
+        level        = self._get_similarity_level(structural, semantic)
         needs_review = self._should_review(structural, semantic)
-        
-        # Generate summary
-        summary = self._generate_summary(structural, semantic, level)
-        
-        return PairResult(
+        summary      = self._generate_summary(structural, semantic, level)
+
+        result = PairResult(
             file_a=path_a.name,
             file_b=path_b.name,
             structural=structural,
             semantic=semantic,
             similarity_level=level,
             needs_review=needs_review,
-            summary=summary
+            summary=summary,
         )
-    
+        result.type1_score = round(type1_score, 4)
+        result.type2_score = round(type2_score, 4)
+        return result
+
     def _run_structural(
         self, 
         file_a: Path, 
@@ -696,6 +697,20 @@ class CloneAnalyzer:
             "needs_review": pair.needs_review,
             "summary": pair.summary,
         }
+
+        result["type_scores"] = {
+            "type1": getattr(pair, "type1_score", 0.0),
+            "type2": getattr(pair, "type2_score", 0.0),
+            "type3": pair.structural.score,
+            "type4": pair.semantic.score,
+            "overall": round(
+                getattr(pair, "type1_score", 0.0) * 0.10 +
+                getattr(pair, "type2_score", 0.0) * 0.15 +
+                pair.structural.score * 0.45 +
+                pair.semantic.score   * 0.30,
+                4
+            ),
+        }
         
         # Add details if available and requested
         if detailed:
@@ -720,3 +735,228 @@ class CloneAnalyzer:
                 }
         
         return result
+
+
+# =============================================================================
+# QUESTION-AWARE CROSS-STUDENT ANALYSIS  (v2.1 addition)
+# =============================================================================
+
+import concurrent.futures as _cf
+
+
+def _analyze_for_assignment(
+    self,
+    student_submissions: list,
+    language: str = "cpp",
+    extension_weights: dict = None,
+    pair_timeout_seconds: int = 30,
+    skip_pairs: set = None,
+) -> dict:
+    """
+    Cross-student comparison for one assignment question.
+
+    Args:
+        student_submissions: list of {student_id, submission_id, files:[abs_paths]}
+        language:            primary language string
+        extension_weights:   override weights, e.g. {".h": 0.4}
+        pair_timeout_seconds: max seconds per pair before it's queued for retry
+        skip_pairs:          set of (i,j) tuples already processed (for retry)
+
+    Returns dict with keys:
+        status, analyzed_count, total_pairs,
+        remaining_pairs, clone_pairs, class_analysis
+    """
+    n           = len(student_submissions)
+    skip_pairs  = skip_pairs or set()
+
+    # Prepare batch frequency filter across ALL students' files
+    all_files = [f for sub in student_submissions for f in sub["files"]]
+    self._structural.prepare_batch([Path(p) for p in all_files])
+    self._semantic.clear_cache()
+
+    # Build same-language cross-student pairs.
+    # For each student pair (i, j), we compare only files of the same language.
+    # build_same_language_pairs is called per-student-pair to stay cross-student.
+    student_pairs = [(i, j) for i in range(n) for j in range(i+1, n)
+                     if (i, j) not in skip_pairs]
+    total_pairs = len(student_pairs)
+
+    clone_pairs:     list = []
+    remaining_pairs: list = []
+    analyzed_count:  int  = 0
+
+    for i, j in student_pairs:
+            sub_a = student_submissions[i]
+            sub_b = student_submissions[j]
+
+            best_result = None
+            with _cf.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_compare_student_pair, self, sub_a, sub_b)
+                try:
+                    best_result    = future.result(timeout=pair_timeout_seconds)
+                    analyzed_count += 1
+                except _cf.TimeoutError:
+                    print(f"⏱  Pair ({i},{j}) timed out — queued")
+                    remaining_pairs.append([i, j])
+                    continue
+                except Exception as e:
+                    print(f"⚠️  Pair ({i},{j}) error: {e} — queued")
+                    remaining_pairs.append([i, j])
+                    continue
+
+            if best_result and (
+                best_result["is_clone"] or
+                best_result["confidence"] in ("HIGH", "MEDIUM")
+            ):
+                clone_pairs.append({
+                    "student_a_id":    sub_a["student_id"],
+                    "submission_a_id": sub_a["submission_id"],
+                    "student_b_id":    sub_b["student_id"],
+                    "submission_b_id": sub_b["submission_id"],
+                    "structural_score": best_result["structural_score"],
+                    "semantic_score":   best_result["semantic_score"],
+                    "combined_score":   best_result["combined_score"],
+                    "confidence":       best_result["confidence"],
+                    "is_clone":         best_result["is_clone"],
+                    "file_a":           best_result["file_a"],
+                    "file_b":           best_result["file_b"],
+                    "details":          best_result.get("details", {}),
+                })
+
+    scores    = [p["combined_score"] for p in clone_pairs]
+    avg_score = sum(scores) / len(scores) if scores else 0.0
+
+    return {
+        "status":          "complete" if not remaining_pairs else "partial",
+        "analyzed_count":  analyzed_count,
+        "total_pairs":     total_pairs,
+        "remaining_pairs": remaining_pairs,
+        "clone_pairs":     clone_pairs,
+        "class_analysis": {
+            "total_students":     n,
+            "total_pairs":        total_pairs,
+            "analyzed_pairs":     analyzed_count,
+            "clone_pairs_found":  len(clone_pairs),
+            "high_confidence":    sum(1 for p in clone_pairs if p["confidence"] == "HIGH"),
+            "average_similarity": round(avg_score, 4),
+        },
+    }
+
+
+def _compare_student_pair(self, sub_a: dict, sub_b: dict) -> dict:
+    """Compare two student submissions — only same-language file pairs."""
+    best = None
+    # Build same-language pairs across the two students' file lists
+    combined = sub_a["files"] + sub_b["files"]
+    a_set    = set(sub_a["files"])
+    b_set    = set(sub_b["files"])
+    lang_pairs = [
+        (fa, fb)
+        for fa, fb in build_same_language_pairs(combined)
+        if (fa in a_set and fb in b_set) or (fb in a_set and fa in b_set)
+    ]
+    for fa, fb in lang_pairs:
+        # Keep fa from student_a, fb from student_b
+        if fa not in a_set:
+            fa, fb = fb, fa
+        try:
+            t1 = self._type1.detect(fa, fb)
+            t2 = self._type2.detect(fa, fb)
+            struct   = self._run_structural(Path(fa), Path(fb), include_details=True)
+            semantic = self._run_semantic(fa, fb, include_details=False)
+            pair_combined = (struct.score + semantic.score) / 2
+            confidence = (
+                "HIGH"     if pair_combined >= 0.70 else
+                "MEDIUM"   if pair_combined >= 0.50 else
+                "LOW"      if pair_combined >= 0.35 else
+                "UNLIKELY"
+            )
+            candidate = {
+                "file_a":            fa,
+                "file_b":            fb,
+                "type1_score":       t1.get("type1_score", 0.0),
+                "type2_score":       t2.get("type2_score", 0.0),
+                "structural_score":  struct.score,
+                "semantic_score":    semantic.score,
+                "combined_score":    round(pair_combined, 4),
+                "confidence":        confidence,
+                "is_clone":          pair_combined >= self.config.review_threshold,
+                "details":           {"structural": vars(struct.details) if struct.details else {}},
+            }
+            if best is None or pair_combined > best["combined_score"]:
+                best = candidate
+        except Exception as e:
+            print(f"  ⚠️  {Path(fa).name} vs {Path(fb).name}: {e}")
+    return best
+
+# Attach new methods to CloneAnalyzer
+CloneAnalyzer.analyze_for_assignment = _analyze_for_assignment
+CloneAnalyzer._compare_student_pair  = _compare_student_pair
+
+
+# =============================================================================
+# LANGUAGE-AWARE FILE GROUPING  (shared utility for all detector types)
+# =============================================================================
+
+# Maps file extension → canonical language name.
+# Same-language files are compared together; cross-language pairs are SKIPPED
+# by ALL detectors (Type-1 through Type-4).
+LANG_EXT_MAP: Dict[str, str] = {
+    # C / C++
+    ".c": "cpp", ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp",
+    ".h": "cpp", ".hpp": "cpp",
+    # Java
+    ".java": "java",
+    # Python
+    ".py": "python",
+    # JavaScript / TypeScript (treated as one pool)
+    ".js": "javascript", ".jsx": "javascript",
+    ".ts": "javascript", ".tsx": "javascript",
+}
+
+
+def group_files_by_language(file_paths: List[str]) -> Dict[str, List[str]]:
+    """
+    Group a flat list of file paths by their programming language.
+
+    Returns a dict like::
+
+        {
+            "cpp":        ["/path/to/main.cpp", "/path/to/utils.h"],
+            "java":       ["/path/to/Solution.java"],
+            "javascript": ["/path/to/frontend/App.jsx", "/path/to/backend/server.js"],
+        }
+
+    Files with unrecognised extensions are silently dropped — they cannot be
+    compared meaningfully by any of the four detectors.
+
+    Design rationale
+    ----------------
+    Both NiCad and PMD/CPD group by language before comparison.  Comparing
+    a Python file against a C++ file would produce meaningless scores because:
+    - Tokens differ (keywords, syntax)
+    - AST structure is completely different
+    - Semantic PDG edges have no correspondence
+    This grouping is therefore enforced *before* any detector runs.
+    """
+    groups: Dict[str, List[str]] = {}
+    for fp in file_paths:
+        ext  = Path(fp).suffix.lower()
+        lang = LANG_EXT_MAP.get(ext)
+        if lang:
+            groups.setdefault(lang, []).append(fp)
+    return groups
+
+
+def build_same_language_pairs(file_paths: List[str]) -> List[Tuple[str, str]]:
+    """
+    Return all (file_a, file_b) pairs where both files share the same language.
+
+    Used by CloneAnalyzer.analyze() and detect_batch() in UnifiedDetector so
+    all four detector types automatically skip cross-language comparisons.
+    """
+    from itertools import combinations
+    pairs: List[Tuple[str, str]] = []
+    for lang_files in group_files_by_language(file_paths).values():
+        pairs.extend(combinations(lang_files, 2))
+    return pairs

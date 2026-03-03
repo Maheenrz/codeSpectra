@@ -1,132 +1,171 @@
-const pool = require('../config/database');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { User } = require('../models');
 
-// Register new user
-exports.register = async (req, res) => {
-  try {
-    const { email, password, first_name, last_name, role } = req.body;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
-    // Check if user exists
-    const userExists = await pool.query(
-      'SELECT * FROM users WHERE email = $1',
-      [email]
-    );
+class AuthController {
+  // Register new user
+  static async register(req, res) {
+    try {
+      const { email, password, firstName, lastName, role, institution } = req.body;
 
-    if (userExists.rows.length > 0) {
-      return res.status(400).json({ message: 'User already exists' });
-    }
-
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const password_hash = await bcrypt.hash(password, salt);
-
-    // Insert user
-    const result = await pool.query(
-      `INSERT INTO users (email, password_hash, first_name, last_name, role, is_active) 
-       VALUES ($1, $2, $3, $4, $5, true) 
-       RETURNING user_id, email, first_name, last_name, role`,
-      [email, password_hash, first_name, last_name, role]
-    );
-
-    const user = result.rows[0];
-
-    // Generate JWT token
-    const token = jwt.sign(
-      { user_id: user.user_id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN }
-    );
-
-    res.status(201).json({
-      message: 'User registered successfully',
-      token,
-      user: {
-        user_id: user.user_id,
-        email: user.email,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        role: user.role
+      // Validate input
+      if (!email || !password || !firstName || !lastName || !role) {
+        return res.status(400).json({ error: 'Missing required fields' });
       }
-    });
 
-  } catch (error) {
-    console.error('Register error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-};
-
-// Login user
-exports.login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    // Check if user exists
-    const result = await pool.query(
-      'SELECT * FROM users WHERE email = $1 AND is_active = true',
-      [email]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    const user = result.rows[0];
-
-    // Verify password
-    const isMatch = await bcrypt.compare(password, user.password_hash);
-
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    // Update last login
-    await pool.query(
-      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = $1',
-      [user.user_id]
-    );
-
-    // Generate JWT token
-    const token = jwt.sign(
-      { user_id: user.user_id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN }
-    );
-
-    res.json({
-      message: 'Login successful',
-      token,
-      user: {
-        user_id: user.user_id,
-        email: user.email,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        role: user.role
+      // Check if user already exists
+      const existingUser = await User.findByEmail(email);
+      if (existingUser) {
+        return res.status(409).json({ error: 'Email already registered' });
       }
-    });
 
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-};
+      // Create user
+      const user = await User.create({
+        email,
+        password,
+        firstName,
+        lastName,
+        role,
+        institution
+      });
 
-// Get current user profile
-exports.getProfile = async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT user_id, email, first_name, last_name, role, institution, created_at FROM users WHERE user_id = $1',
-      [req.user.user_id]
-    );
+      // Generate token
+      const token = jwt.sign(
+        { userId: user.user_id, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRES_IN }
+      );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'User not found' });
+      res.status(201).json({
+        message: 'User registered successfully',
+        user: {
+          userId: user.user_id,
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          role: user.role
+        },
+        token
+      });
+    } catch (error) {
+      console.error('Registration error:', error);
+      res.status(500).json({ error: 'Registration failed', details: error.message });
     }
-
-    res.json(result.rows[0]);
-
-  } catch (error) {
-    console.error('Get profile error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
   }
-};
+
+  // Login user
+  static async login(req, res) {
+    try {
+      const { email, password } = req.body;
+
+      // Validate input
+      if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+      }
+
+      // Find user
+      const user = await User.findByEmail(email);
+      if (!user) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      // Check if user is active
+      if (!user.is_active) {
+        return res.status(403).json({ error: 'Account is disabled' });
+      }
+
+      // Verify password
+      const isValidPassword = await User.verifyPassword(password, user.password_hash);
+      if (!isValidPassword) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      // Update last login
+      await User.updateLastLogin(user.user_id);
+
+      // Generate token
+      const token = jwt.sign(
+        { userId: user.user_id, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRES_IN }
+      );
+
+      res.json({
+        message: 'Login successful',
+        user: {
+          userId: user.user_id,
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          role: user.role,
+          institution: user.institution
+        },
+        token
+      });
+    } catch (error) {
+      console.error('Login error:', error);
+      res.status(500).json({ error: 'Login failed', details: error.message });
+    }
+  }
+
+  // Get current user profile
+  static async getProfile(req, res) {
+    try {
+      const user = await User.findById(req.user.userId);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      res.json({
+        userId: user.user_id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+        institution: user.institution,
+        isActive: user.is_active,
+        createdAt: user.created_at,
+        lastLogin: user.last_login
+      });
+    } catch (error) {
+      console.error('Get profile error:', error);
+      res.status(500).json({ error: 'Failed to get profile', details: error.message });
+    }
+  }
+
+  // Update user profile
+  static async updateProfile(req, res) {
+    try {
+      const { firstName, lastName, institution } = req.body;
+      const updates = {};
+
+      if (firstName) updates.first_name = firstName;
+      if (lastName) updates.last_name = lastName;
+      if (institution) updates.institution = institution;
+
+      const user = await User.update(req.user.userId, updates);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      res.json({
+        message: 'Profile updated successfully',
+        user: {
+          userId: user.user_id,
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          role: user.role,
+          institution: user.institution
+        }
+      });
+    } catch (error) {
+      console.error('Update profile error:', error);
+      res.status(500).json({ error: 'Failed to update profile', details: error.message });
+    }
+  }
+}
+
+module.exports = AuthController;

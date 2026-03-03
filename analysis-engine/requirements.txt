@@ -1,40 +1,31 @@
 # --- Core API & Server ---
-fastapi
-uvicorn
-python-multipart
-python-dotenv
-requests
-httpx
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+requests==2.31.0
+httpx==0.26.0
 
 # --- Database (PostgreSQL) ---
-sqlalchemy
-psycopg2-binary
-pydantic
-pydantic-settings
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+pydantic==2.5.3
+pydantic-settings==2.1.0
 
 # --- Testing ---
-pytest
+pytest==7.4.3
 
-# --- Parsing / AST (Tree-sitter) ---
-tree-sitter
-# Prebuilt language grammars used directly by ast_processor:
-tree_sitter_cpp
-tree_sitter_java
-tree_sitter_python
-tree_sitter_javascript
-# If the above four are not available on your platform, use this instead and adjust imports:
-# tree_sitter_languages
 
 # --- ML / Feature Extraction ---
-numpy
-scipy
-scikit-learn
+numpy==1.26.3
+scipy==1.11.4
+scikit-learn==1.3.2
 
 # --- Clones / Analysis Utils ---
-pygments
-lizard
+pygments==2.17.2
+lizard==1.17.10
 
 # --- Semantic / Metrics / Graphs ---
-radon
-networkx
-lxml
+radon==6.0.1
+networkx==3.2.1
+lxml==5.1.0

@@ -24,6 +24,16 @@ const analysisService = {
     return response.data;
   },
 
+  // Direct file upload — generic analysis, no assignment needed
+  // Calls /api/analyze/detailed on the engine, returns all_pairs with fragment data
+  async analyzeFiles(formData) {
+    const response = await api.post('/analysis/files', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    });
+    return response.data;
+  },
+
   async checkHealth() {
     const response = await api.get('/analysis/health');
     return response.data;

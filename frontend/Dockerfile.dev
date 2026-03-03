@@ -2,17 +2,14 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install
+# Force install ALL deps including devDependencies (needed for tailwindcss/vite)
+RUN NODE_ENV=development npm install --network-timeout=300000 || \
+    NODE_ENV=development npm install --registry=https://registry.npmmirror.com --network-timeout=300000
 
-# Copy source code
 COPY . .
 
-# Expose Vite dev server port
 EXPOSE 5173
 
-# Start dev server with host 0.0.0.0 (important for Docker)
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
