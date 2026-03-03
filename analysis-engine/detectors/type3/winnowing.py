@@ -1,8 +1,24 @@
 # detectors/type3/winnowing.py
+"""
+Winnowing Fingerprinting for Code Clone Detection
+===================================================
+Implements the Winnowing algorithm (Schleimer, Wilkerson & Aiken, 2003)
+for document fingerprinting.
+
+Pipeline:
+  1. Hash every k-gram (contiguous k-token window) using MD5
+  2. Slide a window of size w over the hash list
+  3. Keep the minimum hash in each window → fingerprint set
+  4. Compare fingerprint sets via Jaccard similarity
+
+This gives a position-independent measure of shared code fragments.
+"""
+
 import hashlib
 
 WINNOWING_K = 7
 WINNOWING_W = 4
+
 
 class WinnowingDetector:
     def __init__(self, k: int = WINNOWING_K, window_size: int = WINNOWING_W):

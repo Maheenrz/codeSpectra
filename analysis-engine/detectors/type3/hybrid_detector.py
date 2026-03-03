@@ -1,32 +1,58 @@
 # detectors/type3/hybrid_detector.py
 """
-Type-3 Hybrid Clone Detector
-=============================
+Type-3 Hybrid Clone Detector (FIXED — Dual-Similarity Discriminator)
+=====================================================================
 
 Detection pipeline:
-  1. Winnowing fingerprints  (k=7, Jaccard)   weight: 0.50
-  2. AST skeleton similarity (SequenceMatcher) weight: 0.35
-  3. Complexity metrics      (Euclidean)       weight: 0.15
-  →  hybrid_score = weighted sum of the three
+  1. Structural fragment analysis (dual-similarity discriminator) — NEW
+     - Extracts function/method fragments from both files
+     - Computes raw similarity (original tokens) AND normalized
+       similarity (identifiers replaced with VAR_N)
+     - Uses the GAP between raw and normalized to filter out:
+       * Type-1 clones (exact copies — raw ≥ 95%)
+       * Type-2 clones (just renamed variables — norm ≥ 95%, raw < 95%)
+     - Only reports genuine Type-3 (0.70 ≤ norm < 0.95)
 
-  4. ML model (Random Forest trained on BigCloneBench features)
+  2. Winnowing fingerprints  (k=7, Jaccard similarity)
+     - Position-independent code fragment matching
+     - Boilerplate removed via frequency filter
 
-  5. combined_score = hybrid * 0.50 + ml * 0.50
+  3. AST skeleton similarity (SequenceMatcher on keyword sequences)
+     - Compares control-flow structure ignoring variable names
+
+  4. Complexity metrics      (Euclidean distance)
+     - Cyclomatic complexity, nesting depth, etc.
+
+  5. Hybrid score = weighted combination of all signals
+     - structural_fragment: 40% (most reliable — dual-similarity)
+     - winnowing:           25% (good for copy-paste detection)
+     - ast_skeleton:        20% (structural comparison)
+     - complexity_metrics:  15% (size/shape comparison)
+
+  6. ML model (Random Forest trained on BigCloneBench features)
+     - Provides additional signal when available
+
+  7. combined_score = hybrid * 0.50 + ml * 0.50
      (OR hybrid alone when ML unavailable)
 
-  6. Final verdict = combined_score >= language threshold
-     (previously AND logic — replaced with combined score for better recall)
+  8. Extension weight multiplier:
+     .h/.hpp header files are near-identical boilerplate → scored at 0.35×
 
-  7. Extension weight applied as a multiplier:
-     .h/.hpp files are near-identical boilerplate → scored at 0.35×
+Key fix (compared to old version):
+  The old detector used NiCadDetector which ONLY computed normalized
+  similarity. This made Type-2 clones (renamed variables) look like
+  Type-3. The new approach uses fragment_comparator.py which computes
+  BOTH raw and normalized similarity, explicitly filtering out Type-1
+  and Type-2 matches before reporting anything as Type-3.
 """
 
 from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import joblib
 import numpy as np
@@ -45,15 +71,26 @@ from utils.frequency_filter import BatchFrequencyFilter
 from detectors.type3.winnowing import WinnowingDetector, WINNOWING_K
 from detectors.type3.config.extension_weights import get_pair_weight
 from detectors.type3.config.thresholds import get_thresholds, get_confidence
-from detectors.type3.nicad_detector import NiCadDetector
+from detectors.type3.fragment_extractor import FragmentExtractor, Fragment
+from detectors.type3.fragment_comparator import (
+    compare_fragments,
+    FragmentComparisonResult,
+    TYPE3_NORM_THRESHOLD,
+)
+from detectors.type3.normalizer import normalize_tokens
+from detectors.type3.lcs_comparator import get_matching_blocks
+from detectors.type3.clone_clusterer import CloneClusterer
 
 
 class Type3HybridDetector:
     """
     Hybrid Type-3 clone detector with:
-    - Corrected hybrid weights  (winnowing 50%, AST 35%, metrics 15%)
-    - Combined-score final verdict (no more fragile AND logic)
-    - Extension-aware weighting  (.h files discounted)
+    - Dual-similarity fragment analysis (filters out Type-1/Type-2)
+    - Winnowing fingerprinting
+    - AST skeleton comparison
+    - Complexity metrics
+    - Optional ML model (BigCloneBench-trained Random Forest)
+    - Extension-aware weighting (.h files discounted)
     - Language-specific thresholds from config/thresholds.py
     """
 
@@ -73,13 +110,17 @@ class Type3HybridDetector:
         ml_threshold: float = 0.382,
     ):
         # ── Heuristic components ──────────────────────────────────────────
-        self.tokenizer   = CodeTokenizer()
-        self.ast_proc    = ASTProcessor()
+        self.tokenizer    = CodeTokenizer()
+        self.ast_proc     = ASTProcessor()
         self.metrics_calc = MetricsCalculator()
-        self.winnowing   = WinnowingDetector(k=WINNOWING_K, window_size=4)
-        # freq_filter k must match winnowing k so the same k-gram hashes are compared
-        self.freq_filter = BatchFrequencyFilter(threshold=0.70)
-        self.nicad = NiCadDetector(similarity_threshold=0.70, min_fragment_lines=6)
+        self.winnowing    = WinnowingDetector(k=WINNOWING_K, window_size=4)
+        self.freq_filter  = BatchFrequencyFilter(threshold=0.70)
+
+        # ── Structural fragment detector (dual-similarity — THE FIX) ──────
+        self._extractor = FragmentExtractor(min_lines=6, min_tokens=20)
+        self._clusterer = CloneClusterer()
+        self._frag_cache: Dict[str, List[Fragment]] = {}
+
         # ── ML components ────────────────────────────────────────────────
         self._adapter    = ASTMLAdapter(
             cache_dir=str(_REPO_ROOT / "analysis-engine" / "feature_cache")
@@ -129,30 +170,131 @@ class Type3HybridDetector:
     def _detect_language(self, path: Path) -> str:
         return self._EXT_LANG.get(path.suffix.lower(), "cpp")
 
+    def _get_fragments(self, file_path: str) -> List[Fragment]:
+        if file_path not in self._frag_cache:
+            self._frag_cache[file_path] = self._extractor.extract(file_path)
+        return self._frag_cache[file_path]
+
     def prepare_batch(self, all_file_paths: List[Path]) -> None:
+        """Pre-compute frequency filter and extract fragments for all files."""
         all_tokens = [self.tokenizer.tokenize_file(str(p)) for p in all_file_paths]
         self.freq_filter.train_on_batch(all_tokens, k=WINNOWING_K)
-        self.nicad.prepare_batch([str(p) for p in all_file_paths])
-        
+        for p in all_file_paths:
+            self._get_fragments(str(p))
+
+    def clear_cache(self) -> None:
+        self._frag_cache.clear()
+
+    # ────��────────────────────────────────────────────────────────────────
+    # Structural fragment analysis (THE CORE FIX)
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _structural_fragment_score(
+        self, file_a: str, file_b: str
+    ) -> Dict[str, Any]:
+        """
+        Compare two files at fragment level using dual-similarity.
+
+        Returns:
+            {
+                "type3_score":      float,   # best Type-3 score (0.0 if none)
+                "is_clone":         bool,
+                "clone_pairs":      [...],   # genuine Type-3 pairs only
+                "discrimination": {          # what was filtered out
+                    "type1_pairs":  int,
+                    "type2_pairs":  int,
+                    "type3_pairs":  int,
+                    "none_pairs":   int,
+                },
+                "best_raw_sim":     float,
+                "best_norm_sim":    float,
+            }
+        """
+        frags_a = self._get_fragments(file_a)
+        frags_b = self._get_fragments(file_b)
+
+        empty_result = {
+            "type3_score":    0.0,
+            "is_clone":       False,
+            "clone_pairs":    [],
+            "discrimination": {"type1_pairs": 0, "type2_pairs": 0,
+                               "type3_pairs": 0, "none_pairs": 0},
+            "best_raw_sim":   0.0,
+            "best_norm_sim":  0.0,
+        }
+
+        if not frags_a or not frags_b:
+            return empty_result
+
+        best_type3_score = 0.0
+        best_raw_sim     = 0.0
+        best_norm_sim    = 0.0
+        type3_pairs: List[Dict] = []
+        counts = {"type1_pairs": 0, "type2_pairs": 0,
+                  "type3_pairs": 0, "none_pairs": 0}
+
+        for fa in frags_a:
+            for fb in frags_b:
+                result = compare_fragments(fa, fb)
+
+                # Track highest similarities seen
+                if result.raw_similarity > best_raw_sim:
+                    best_raw_sim = result.raw_similarity
+                if result.norm_similarity > best_norm_sim:
+                    best_norm_sim = result.norm_similarity
+
+                # Count by clone type
+                counts[f"{result.clone_type}_pairs"] += 1
+
+                # Only keep genuine Type-3 pairs
+                if result.is_type3:
+                    type3_pairs.append({
+                        "frag_a":          fa,
+                        "frag_b":          fb,
+                        "similarity":      result.type3_score,
+                        "raw_similarity":  result.raw_similarity,
+                        "norm_similarity": result.norm_similarity,
+                    })
+                    if result.type3_score > best_type3_score:
+                        best_type3_score = result.type3_score
+
+        return {
+            "type3_score":    round(best_type3_score, 4),
+            "is_clone":       best_type3_score >= TYPE3_NORM_THRESHOLD,
+            "clone_pairs":    type3_pairs,
+            "discrimination": counts,
+            "best_raw_sim":   round(best_raw_sim, 4),
+            "best_norm_sim":  round(best_norm_sim, 4),
+        }
+
     # ─────────────────────────────────────────────────────────────────────
     # Hybrid heuristic scores
     # ─────────────────────────────────────────────────────────────────────
 
-    def _hybrid_scores(self, file_a: Path, file_b: Path) -> Dict[str, float]:
+    def _hybrid_scores(self, file_a: Path, file_b: Path) -> Dict[str, Any]:
+        """
+        Compute all heuristic scores for a file pair.
+
+        Returns dict with: winnowing, ast, metrics, structural, discrimination
+        """
         tokens_a = self.tokenizer.tokenize_file(str(file_a))
         tokens_b = self.tokenizer.tokenize_file(str(file_b))
 
         if not tokens_a or not tokens_b:
-            return {"winnowing": 0.0, "ast": 0.0, "metrics": 0.0, "nicad": 0.0}
+            return {
+                "winnowing": 0.0, "ast": 0.0, "metrics": 0.0,
+                "structural": 0.0, "discrimination": {},
+                "best_raw_sim": 0.0, "best_norm_sim": 0.0,
+            }
 
-        # Winnowing (boilerplate removed)
+        # Winnowing (boilerplate removed via frequency filter)
         fp_a = self.winnowing.get_fingerprint(tokens_a)
         fp_b = self.winnowing.get_fingerprint(tokens_b)
         fp_a = {h for h in fp_a if h not in self.freq_filter.common_hashes}
         fp_b = {h for h in fp_b if h not in self.freq_filter.common_hashes}
         w_score = float(self.winnowing.calculate_similarity(fp_a, fp_b))
 
-        # AST skeleton (keyword sequence)
+        # AST skeleton (keyword sequence comparison)
         a_score = float(self.ast_proc.calculate_similarity(str(file_a), str(file_b)))
 
         # Complexity metrics
@@ -160,14 +302,22 @@ class Type3HybridDetector:
         mb = self.metrics_calc.calculate_file_metrics(str(file_b))
         m_score = float(self.metrics_calc.calculate_similarity(ma, mb))
 
-        # NiCad fragment-level LCS (NEW — dominant signal)
-        nicad_result = self.nicad.detect(str(file_a), str(file_b))
-        n_score = float(nicad_result["nicad_score"])
+        # Structural fragment analysis (dual-similarity — THE KEY FIX)
+        structural_result = self._structural_fragment_score(str(file_a), str(file_b))
+        s_score = float(structural_result["type3_score"])
 
-        return {"winnowing": w_score, "ast": a_score, "metrics": m_score, "nicad": n_score}
+        return {
+            "winnowing":       w_score,
+            "ast":             a_score,
+            "metrics":         m_score,
+            "structural":      s_score,
+            "discrimination":  structural_result.get("discrimination", {}),
+            "best_raw_sim":    structural_result.get("best_raw_sim", 0.0),
+            "best_norm_sim":   structural_result.get("best_norm_sim", 0.0),
+        }
 
     # ─────────────────────────────────────────────────────────────────────
-    # ML feature vector
+    # ML feature vector (BigCloneBench-trained Random Forest)
     # ─────────────────────────────────────────────────────────────────────
 
     def _select_primary_unit(self, units):
@@ -236,8 +386,31 @@ class Type3HybridDetector:
             print(f"⚠️  [Type3] ML extraction error: {e}")
             return None
 
+    # ────────────────────────────────────────��────────────────────────────
+    # Diff blocks for frontend code highlighting
     # ─────────────────────────────────────────────────────────────────────
-    # Public API
+
+    def get_diff_blocks(self, file_a: str, file_b: str) -> List[Dict]:
+        """
+        Return matching token blocks for the best Type-3 fragment pair.
+        Used by the frontend diff/highlight view.
+        """
+        structural = self._structural_fragment_score(file_a, file_b)
+        if not structural["clone_pairs"]:
+            return []
+        best_pair = max(structural["clone_pairs"], key=lambda p: p["similarity"])
+        fa = best_pair["frag_a"]
+        fb = best_pair["frag_b"]
+        norm_a = normalize_tokens(fa.tokens)
+        norm_b = normalize_tokens(fb.tokens)
+        blocks = get_matching_blocks(norm_a, norm_b)
+        return [
+            {"i": i, "j": j, "n": n}
+            for i, j, n in blocks if n > 0
+        ]
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Public API — single pair detection
     # ─────────────────────────────────────────────────────────────────────
 
     def detect(
@@ -253,10 +426,11 @@ class Type3HybridDetector:
             "hybrid":   {"score": float, "is_clone": bool, "details": {...}},
             "ml":       {"score": float, "is_clone": bool} | None,
             "combined": {"score": float, "is_clone": bool, "confidence": str},
-            "is_clone": bool,          ← combined_score >= threshold
+            "is_clone": bool,
             "language": str,
-            "extension_weight": float, ← pair weight (1.0 for .cpp, 0.35 for .h)
+            "extension_weight": float,
             "thresholds": {...},
+            "clone_type_discrimination": {...},
         }
         """
         fa = Path(file_path_a)
@@ -269,12 +443,13 @@ class Type3HybridDetector:
         # ── Hybrid heuristics ────────────────────────────────────────────
         h = self._hybrid_scores(fa, fb)
 
-        # FIXED weights: winnowing 50%, AST 35%, metrics 15%, NiCad 70%
+        # Weighted combination — structural_fragment gets highest weight
+        # because it uses dual-similarity and correctly filters Type-1/2
         raw_hybrid = (
-            h["nicad"]    * 0.40   # fragment LCS — most reliable for Type-3
-            + h["winnowing"] * 0.30   # k-gram fingerprinting
+            h["structural"]  * 0.40   # fragment dual-similarity (Type-3 only)
+            + h["winnowing"] * 0.25   # k-gram fingerprinting
             + h["ast"]       * 0.20   # control-flow skeleton
-            + h["metrics"]   * 0.10   # cyclomatic complexity
+            + h["metrics"]   * 0.15   # cyclomatic complexity
         )
 
         # Apply extension weight (headers etc. are discounted)
@@ -284,18 +459,18 @@ class Type3HybridDetector:
             "score":    round(hybrid_score, 4),
             "is_clone": bool(hybrid_score >= thresholds["hybrid"]),
             "details": {
-                "nicad_fragment_score":         round(h["nicad"],     4),
-                "winnowing_fingerprint_score":  round(h["winnowing"], 4),
-                "ast_skeleton_score":           round(h["ast"],       4),
-                "complexity_metric_score":      round(h["metrics"],   4),
-                "extension_weight":             round(ext_weight,      4),
+                "structural_fragment_score":     round(h["structural"], 4),
+                "winnowing_fingerprint_score":   round(h["winnowing"],  4),
+                "ast_skeleton_score":            round(h["ast"],        4),
+                "complexity_metric_score":       round(h["metrics"],    4),
+                "extension_weight":              round(ext_weight,       4),
             },
         }
 
         # ── ML score ─────────────────────────────────────────────────────
         raw_ml = self._ml_score(fa, fb)
         if raw_ml is not None:
-            ml_score = raw_ml * ext_weight   # also discount ML by ext weight
+            ml_score = raw_ml * ext_weight
             ml = {
                 "score":          round(ml_score, 4),
                 "is_clone":       bool(ml_score >= thresholds["ml"]),
@@ -324,11 +499,24 @@ class Type3HybridDetector:
             "hybrid":           hybrid,
             "ml":               ml,
             "combined":         combined,
-            "is_clone":         combined_is_clone,   # ← combined score, NOT AND logic
+            "is_clone":         combined_is_clone,
             "language":         language,
             "extension_weight": round(ext_weight, 4),
             "thresholds":       thresholds,
+            # NEW: tells the caller what clone types were found and filtered
+            "clone_type_discrimination": {
+                "type1_pairs_filtered": h.get("discrimination", {}).get("type1_pairs", 0),
+                "type2_pairs_filtered": h.get("discrimination", {}).get("type2_pairs", 0),
+                "type3_pairs_detected": h.get("discrimination", {}).get("type3_pairs", 0),
+                "none_pairs":           h.get("discrimination", {}).get("none_pairs", 0),
+                "best_raw_sim":         h.get("best_raw_sim", 0.0),
+                "best_norm_sim":        h.get("best_norm_sim", 0.0),
+            },
         }
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Public API — batch detection
+    # ─────────────────────────────────────────────────────────────────────
 
     def detect_clones(self, all_file_paths: List[str]):
         """Batch detection — returns DetectionResultWrapper sorted by score."""

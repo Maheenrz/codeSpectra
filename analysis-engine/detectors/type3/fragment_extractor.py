@@ -1,15 +1,22 @@
+# detectors/type3/fragment_extractor.py
 """
-Fragment Extractor — NiCad Step 1
-==================================
+Fragment Extractor — Code Block Extraction
+============================================
 Extracts function/method/block fragments from source files using
 regex-based parsing (no tree-sitter dependency).
 
 A fragment is a contiguous block of code (a function, method, or
 meaningful block) with:
-  - min_lines: minimum source lines (default 6, like NiCad)
+  - min_lines:  minimum source lines (default 6)
   - min_tokens: minimum token count (default 20)
 
 Supports: C/C++, Java, Python, JavaScript/TypeScript
+
+Why fragment-level?
+  Comparing whole files is too coarse — two files may share one
+  copied function buried among original code.  Fragment extraction
+  lets us find the specific copied block and measure its similarity
+  independently from the rest of the file.
 """
 
 from __future__ import annotations
@@ -27,7 +34,7 @@ class Fragment:
     start_line:   int
     end_line:     int
     source_lines: List[str]    # raw lines
-    tokens:       List[str]    # tokenized (raw)
+    tokens:       List[str]    # tokenized (raw, before normalization)
 
     @property
     def line_count(self) -> int:
@@ -196,10 +203,16 @@ class FragmentExtractor:
 
         return frags
 
-    # ── Tokenizer (raw, for size check only) ─────────────────────────────────
+    # ── Tokenizer (raw, before normalization) ─────────────────────────────────
 
     @staticmethod
     def _tokenize_lines(lines: List[str]) -> List[str]:
+        """
+        Tokenize source lines into raw tokens.
+        Strips single-line comments but keeps all identifiers as-is.
+        These raw tokens are what we compare BEFORE normalization
+        to distinguish Type-1/2 from Type-3.
+        """
         tokens = []
         for line in lines:
             # Strip single-line comments

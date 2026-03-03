@@ -297,7 +297,7 @@ class UnifiedDetector:
     # =========================================================================
     
     def _process_type3_result(self, raw: Dict) -> Type3Result:
-        """Process raw Type-3 detector output"""
+        """Process raw Type-3 detector output — FIXED for new hybrid_detector"""
         hybrid = raw["hybrid"]
         ml = raw.get("ml")
         
@@ -305,12 +305,14 @@ class UnifiedDetector:
         ml_score = ml["score"] if ml else 0.0
         combined = (hybrid_score * 0.5) + (ml_score * 0.5)
         
-        # AND logic for is_clone
-        is_clone = (hybrid_score >= THRESHOLDS['type3']['clone']) and \
-                   (ml_score >= 0.60 if ml else False)
+        # Use combined score for verdict (not AND logic — old approach was too strict)
+        is_clone = bool(combined >= THRESHOLDS['type3']['clone'])
         
         # Determine confidence
         confidence = self._get_type3_confidence(combined)
+        
+        # Read detail keys that match new hybrid_detector output
+        details = hybrid.get("details", {})
         
         return Type3Result(
             score=round(combined, 4),
@@ -319,12 +321,15 @@ class UnifiedDetector:
             details={
                 "hybrid_score": round(hybrid_score, 4),
                 "ml_score": round(ml_score, 4) if ml else None,
-                "winnowing": round(hybrid["details"]["winnowing_fingerprint_score"], 4),
-                "ast": round(hybrid["details"]["ast_skeleton_score"], 4),
-                "metrics": round(hybrid["details"]["complexity_metric_score"], 4),
+                "structural_fragment": round(details.get("structural_fragment_score", 0.0), 4),
+                "winnowing": round(details.get("winnowing_fingerprint_score", 0.0), 4),
+                "ast": round(details.get("ast_skeleton_score", 0.0), 4),
+                "metrics": round(details.get("complexity_metric_score", 0.0), 4),
+                # NEW: discrimination info for debugging/logging
+                "discrimination": raw.get("clone_type_discrimination", {}),
             }
         )
-    
+
     def _process_type4_result(self, raw: Dict) -> Type4Result:
         """Process raw Type-4 detector output"""
         score = raw["semantic_score"]

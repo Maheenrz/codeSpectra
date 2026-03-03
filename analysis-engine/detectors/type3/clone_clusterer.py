@@ -1,12 +1,17 @@
+# detectors/type3/clone_clusterer.py
 """
-Clone Clusterer — NiCad Step 4
-================================
+Clone Clusterer — Transitive Closure Grouping
+================================================
 Groups overlapping clone pairs into clone classes using
-union-find (disjoint-set) transitive closure — exactly
-how NiCad builds its clone_classes output.
+union-find (disjoint-set) transitive closure.
 
 A clone class is a set of fragments where every member
 is directly or transitively similar to at least one other member.
+
+Example:
+  If fragment A ~ fragment B and fragment B ~ fragment C,
+  then {A, B, C} form one clone class even if A and C
+  are not directly similar.
 """
 
 from __future__ import annotations
@@ -74,7 +79,7 @@ class CloneClusterer:
 
     def cluster(
         self,
-        pairs: List[Dict],   # each has frag_a, frag_b, similarity, …
+        pairs: List[Dict],   # each has frag_a, frag_b, similarity
         min_similarity: float = 0.70,
     ) -> List[CloneClass]:
         """

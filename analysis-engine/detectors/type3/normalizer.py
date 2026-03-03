@@ -1,31 +1,45 @@
+# detectors/type3/normalizer.py
 """
-Normalizer — NiCad Step 2
-==========================
-Applies NiCad-style blind normalization to token sequences:
+Token Normalizer — Blind Identifier Renaming
+==============================================
+Applies blind normalization to token sequences:
 
   - All identifiers (non-keywords) → VAR_0, VAR_1, ...
     (same identifier gets the same VAR_N within one fragment)
   - String literals   → STR
   - Numeric literals  → NUM
-  - Comments stripped already by FragmentExtractor
+  - Comments are already stripped by FragmentExtractor
 
-This exposes Type-2 (renamed variable) and Type-3 (near-miss) clones.
-Two fragments that differ only in variable names become IDENTICAL after
-normalization → LCS similarity = 1.0.
+Why this matters for clone detection:
+  After normalization, two fragments that differ ONLY in variable names
+  become IDENTICAL. This is the key insight:
+
+  - If raw tokens are identical          → Type-1 clone (exact copy)
+  - If raw tokens differ but normalized
+    tokens are identical                  → Type-2 clone (renamed variables)
+  - If even normalized tokens differ
+    but are still highly similar          → Type-3 clone (structural modification)
+
+  The old code only computed normalized similarity and called everything
+  "Type-3". The new approach compares BOTH raw and normalized to correctly
+  discriminate between clone types.
 """
 
 from __future__ import annotations
 import re
 from typing import List, Dict
 
-# Keywords never renamed
+# ── Keywords: never renamed during normalization ──────────────────────────────
+# These are language-reserved words and operators that carry structural
+# meaning. Renaming them would destroy the code's semantics.
+
 _KEYWORDS = {
     # C / C++
     "if","else","for","while","do","switch","case","break","continue","return",
     "void","int","float","double","char","bool","long","short","unsigned","signed",
     "const","static","inline","virtual","public","private","protected","class",
     "struct","namespace","template","typename","new","delete","try","catch","throw",
-    "true","false","nullptr","NULL","sizeof","typedef","using","auto","nullptr",
+    "true","false","nullptr","NULL","sizeof","typedef","using","auto",
     # Java
     "extends","implements","interface","abstract","final","this","super","import",
     "package","throws","instanceof","synchronized","volatile","transient","native",
@@ -51,10 +65,14 @@ _IDENT_RE   = re.compile(r'\b[a-zA-Z_]\w*\b')
 
 def normalize_tokens(tokens: List[str]) -> List[str]:
     """
-    Apply NiCad-style blind normalization to a token list.
+    Apply blind normalization to a token list.
+
+    Each unique non-keyword identifier gets mapped to VAR_0, VAR_1, etc.
+    String literals → STR, numeric literals → NUM.
+    Keywords and operators pass through unchanged.
+
     Returns a new list of normalized tokens.
     """
-    # First pass: map each unique identifier to VAR_N
     id_map: Dict[str, str] = {}
     counter = [0]  # use list for closure mutation
 
@@ -78,8 +96,3 @@ def normalize_tokens(tokens: List[str]) -> List[str]:
             normalized.append(tok)
 
     return normalized
-
-
-def normalize_fragment_tokens(tokens: List[str]) -> List[str]:
-    """Convenience wrapper — same as normalize_tokens."""
-    return normalize_tokens(tokens)

@@ -1,17 +1,17 @@
+# detectors/type3/lcs_comparator.py
 """
-LCS Comparator — NiCad Step 3
-==============================
-Computes Type-3 clone similarity using Longest Common Subsequence (LCS)
-on normalized token sequences, exactly as NiCad does.
+LCS-Based Token Sequence Comparator
+=====================================
+Computes similarity between two token sequences using the
+Longest Common Subsequence (LCS) algorithm.
 
-Dissimilarity = (|A| + |B| - 2 * LCS(A,B)) / (|A| + |B|)
-Similarity    = 1 - Dissimilarity
+Uses Python's difflib.SequenceMatcher which implements the
+Ratcliff/Obershelp algorithm — functionally equivalent to LCS
+for our purposes and runs in O(n) amortized on real code.
 
-NiCad default threshold: dissimilarity ≤ 0.30 → similarity ≥ 0.70
-
-Uses Python's difflib.SequenceMatcher which is backed by a C implementation
-of the Ratcliff/Obershelp algorithm — equivalent to LCS for our purposes
-and runs in O(n) amortized on real code.
+Formula:
+  similarity = 2 * matching_tokens / total_tokens
+  This gives a value in [0, 1] where 1.0 = identical sequences.
 """
 
 from __future__ import annotations
@@ -27,16 +27,13 @@ def lcs_similarity(tokens_a: List[str], tokens_b: List[str]) -> float:
     if not tokens_a or not tokens_b:
         return 0.0
 
-    # SequenceMatcher.ratio() = 2*M / T where M = matching tokens, T = total
-    # This is equivalent to 1 - NiCad's dissimilarity ratio
     matcher = difflib.SequenceMatcher(None, tokens_a, tokens_b, autojunk=False)
     return round(matcher.ratio(), 4)
 
 
 def lcs_dissimilarity(tokens_a: List[str], tokens_b: List[str]) -> float:
     """
-    NiCad dissimilarity ratio. 0 = identical, 1 = nothing in common.
-    Threshold: ≤ 0.30 means Type-3 clone (≥70% similar).
+    Dissimilarity ratio. 0 = identical, 1 = nothing in common.
     """
     return round(1.0 - lcs_similarity(tokens_a, tokens_b), 4)
 
