@@ -34,4 +34,5 @@ Thumbs.db
 *.joblib
 *.parquet
 analysis-engine/detectors/type3/models/
-analysis-engine/data/bigclonebench/
+analysis-engine/data/bigclonebench/joern-cli.zip
+*.zip # optional: block all zips

@@ -91,6 +91,6 @@ app.listen(PORT, () => {
    Port: ${PORT}                                    
    Environment: ${process.env.NODE_ENV || "development"}                  ║
    Database: PostgreSQL   
-   Analysis Engine: http://localhost:5000      
+   Analysis Engine: http://localhost:8000      
   `);
 });

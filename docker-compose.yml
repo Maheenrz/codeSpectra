@@ -95,7 +95,7 @@ services:
     volumes:
       - ./backend:/app
       - /app/node_modules
-      - backend_uploads:/app/uploads
+      - ./backend/uploads:/app/uploads
     networks:
       - codespectra_network
 
@@ -119,10 +119,10 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./analysis-engine:/app
-      - analysis_workspace:/workspace
-      - backend_uploads:/app/uploads
-      - /var/run/docker.sock:/var/run/docker.sock
+    - ./analysis-engine:/app
+    - analysis_workspace:/workspace
+    - ./backend/uploads:/app/uploads
+    - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - codespectra_network
 
@@ -155,8 +155,6 @@ volumes:
   pgadmin_data:
     driver: local
   redis_data:
-    driver: local
-  backend_uploads:
     driver: local
   analysis_workspace:
     driver: local

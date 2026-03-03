@@ -1,6 +1,8 @@
+// frontend/src/services/analysisService.js
 import api from '../utils/api';
 
 const analysisService = {
+
   async analyzeSubmission(submissionId) {
     const response = await api.post(`/analysis/submission/${submissionId}`);
     return response.data;
@@ -17,15 +19,18 @@ const analysisService = {
   },
 
   async getAssignmentResults(assignmentId, threshold) {
-    const url = threshold 
-      ? `/analysis/results/assignment/${assignmentId}?threshold=${threshold}`
-      : `/analysis/results/assignment/${assignmentId}`;
+    const t   = threshold ?? 50;
+    const url = `/analysis/results/assignment/${assignmentId}?threshold=${t}`;
     const response = await api.get(url);
     return response.data;
   },
 
-  // Direct file upload — generic analysis, no assignment needed
-  // Calls /api/analyze/detailed on the engine, returns all_pairs with fragment data
+  // ── Fetch single pair detail — returns fragments with source code ────────
+  async getPairDetail(pairId) {
+    const response = await api.get(`/analysis/pair/${pairId}`);
+    return response.data;
+  },
+
   async analyzeFiles(formData) {
     const response = await api.post('/analysis/files', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
