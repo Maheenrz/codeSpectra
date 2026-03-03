@@ -36,3 +36,13 @@ Thumbs.db
 analysis-engine/detectors/type3/models/
 analysis-engine/data/bigclonebench/joern-cli.zip
 *.zip # optional: block all zips
+
+# Large files - never commit these
+joern-cli.zip
+*.zip
+*.parquet
+*.joblib
+analysis-engine/data/
+analysis-engine/detectors/type3/models/
+analysis-engine/detectors/type4/joern/docker/workspace/
+dsa_dataset/
