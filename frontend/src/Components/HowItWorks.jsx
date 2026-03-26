@@ -1,68 +1,62 @@
 import React from 'react';
 
-const steps = [
+const STEPS = [
   {
-    icon: (
-      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-      </svg>
-    ),
-    title: 'Upload Files',
-    description: 'Upload your code files or paste code snippets directly into our platform. Supports multiple programming languages and file formats.',
+    n: '01', title: 'Create an Assignment',
+    desc: 'Set title, due date, language, and which detection types to enable. Add per-question breakdowns if needed.',
+    accent: '#CF7249', bg: '#FEF3EC', border: '#FCDDC5',
+    icon: 'https://api.iconify.design/lucide:folder-plus.svg?color=%23CF7249',
   },
   {
-    icon: (
-      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-      </svg>
-    ),
-    title: 'AI Analysis',
-    description: 'Our advanced AI algorithms analyze your code using Type 1–4 detection methods. Deep semantic and structural analysis in seconds.',
+    n: '02', title: 'Students Submit Code',
+    desc: 'Students upload individual files or ZIP archives. Files are stored and grouped by language automatically.',
+    accent: '#2D6A6A', bg: '#EBF4F4', border: '#B8D9D9',
+    icon: 'https://api.iconify.design/lucide:upload-cloud.svg?color=%232D6A6A',
   },
   {
-    icon: (
-      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-      </svg>
-    ),
-    title: 'Get Results',
-    description: 'Receive comprehensive reports with similarity scores, highlighted matches, and detailed insights. Export and share with ease.',
+    n: '03', title: 'Engine Runs Analysis',
+    desc: 'Every pair is compared across all 4 detection types simultaneously — Type-1 through Type-4.',
+    accent: '#C4827A', bg: '#FAEDEC', border: '#F0C4C0',
+    icon: 'https://api.iconify.design/lucide:cpu.svg?color=%23C4827A',
+  },
+  {
+    n: '04', title: 'Review the Report',
+    desc: 'See ranked similarity pairs, confidence scores, flagged fragments, and side-by-side code diff.',
+    accent: '#8B9BB4', bg: '#EFF2F7', border: '#C8D2E0',
+    icon: 'https://api.iconify.design/lucide:file-search.svg?color=%238B9BB4',
   },
 ];
 
 const HowItWorks = () => (
-  <section id="how-it-works" className="py-24 bg-white">
-    <div className="px-16 xl:px-24 max-w-screen-2xl mx-auto">
-
-      {/* Heading */}
-      <div className="text-center mb-20">
-        <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-          How It <span className="text-indigo-500">Works</span>
-        </h2>
-        <p className="text-gray-400 text-lg">Get started in three simple steps</p>
+  <section id="how-it-works" className="bg-[#F7F3EE] py-28">
+    <div className="max-w-6xl mx-auto px-6">
+      <div className="text-center mb-16">
+        <span className="inline-block text-xs font-bold tracking-[0.2em] uppercase text-[#CF7249] px-4 py-1.5 rounded-full bg-[#FEF3EC] border border-[#FCDDC5] mb-4">
+          Workflow
+        </span>
+        <h2 className="text-4xl font-bold text-[#1A1714] mb-4">Four steps to a full report.</h2>
+        <p className="text-[#6B6560] max-w-md mx-auto">From assignment creation to plagiarism report in minutes.</p>
       </div>
 
-      {/* Steps */}
-      <div className="relative grid md:grid-cols-3 gap-8">
-
-        {/* Connector line — sits behind the circles */}
-        <div className="hidden md:block absolute top-10 left-[calc(16.67%+1.25rem)] right-[calc(16.67%+1.25rem)] h-0.5 bg-indigo-100 z-0" />
-
-        {steps.map((step, i) => (
-          <div key={i} className="relative z-10 flex flex-col items-center text-center group">
-
-            {/* Circle */}
-            <div className="w-20 h-20 rounded-full bg-indigo-500 group-hover:bg-indigo-600 flex items-center justify-center text-white shadow-lg mb-8 transition-colors duration-300">
-              {step.icon}
+      <div className="grid md:grid-cols-2 gap-4">
+        {STEPS.map(({ n, title, desc, accent, bg, border, icon }) => (
+          <div
+            key={n}
+            className="rounded-3xl p-7 border transition-all hover:shadow-md"
+            style={{ background: bg, borderColor: border }}
+          >
+            <div className="flex items-start gap-5">
+              <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center shadow-sm flex-shrink-0">
+                <img src={icon} alt="" width="22" height="22" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[10px] font-black tracking-widest" style={{ color: accent }}>{n}</span>
+                  <h3 className="text-base font-bold text-[#1A1714]">{title}</h3>
+                </div>
+                <p className="text-sm text-[#6B6560] leading-relaxed">{desc}</p>
+              </div>
             </div>
-
-            {/* Step number badge */}
-            <span className="absolute top-0 right-[calc(50%-2.5rem)] -translate-y-1 w-5 h-5 rounded-full bg-indigo-200 text-indigo-700 text-xs font-bold flex items-center justify-center">
-              {i + 1}
-            </span>
-
-            <h3 className="text-xl font-bold text-gray-900 mb-3">{step.title}</h3>
-            <p className="text-gray-400 text-sm leading-relaxed max-w-xs">{step.description}</p>
           </div>
         ))}
       </div>

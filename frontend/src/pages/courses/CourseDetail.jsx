@@ -1,299 +1,225 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import courseService from '../../services/courseService';  // ⭐ ADD THIS IMPORT
+import courseService from '../../services/courseService';
 import assignmentService from '../../services/assignmentService';
-import LoadingSpinner from '../../components/common/LoadingSpinner';
-import Card from '../../components/common/Card';
+import PageLoader from '../../Components/common/PageLoader';
+
+const IconBack = () => (
+  <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+);
+const IconLogOut = () => (
+  <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+);
 
 const CourseDetail = () => {
   const { courseId } = useParams();
-  const navigate = useNavigate();
-  const { isInstructor } = useAuth();
-  const [course, setCourse] = useState(null);
+  const { user, isInstructor, logout } = useAuth();
+  const [course, setCourse]           = useState(null);
   const [assignments, setAssignments] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [activeTab, setActiveTab] = useState('assignments');
-  const [loading, setLoading] = useState(true);
-  const [regenerating, setRegenerating] = useState(false);  // ⭐ ADD THIS
+  const [students, setStudents]       = useState([]);
+  const [activeTab, setActiveTab]     = useState('assignments');
+  const [loading, setLoading]         = useState(true);
+  const [regenerating, setRegenerating] = useState(false);
+  const [copied, setCopied]           = useState(false);
 
-  useEffect(() => {
-    fetchCourseData();
-  }, [courseId]);
+  useEffect(() => { fetchData(); }, [courseId]);
 
-  const fetchCourseData = async () => {
+  const fetchData = async () => {
     try {
       const [courseData, assignmentsData] = await Promise.all([
         courseService.getCourseById(courseId),
         assignmentService.getCourseAssignments(courseId),
       ]);
-      
       setCourse(courseData);
       setAssignments(assignmentsData);
-
       if (isInstructor) {
-        const studentsData = await courseService.getCourseStudents(courseId);
-        setStudents(studentsData);
+        const s = await courseService.getCourseStudents(courseId);
+        setStudents(s);
       }
-    } catch (error) {
-      console.error('Error fetching course:', error);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   };
 
-  // ⭐ ADD THIS FUNCTION
-  const handleRegenerateCode = async () => {
-    if (!window.confirm('Generate a new join code? The old code will stop working.')) return;
-    
-    setRegenerating(true);
-    try {
-      const result = await courseService.regenerateJoinCode(courseId);
-      setCourse({ ...course, join_code: result.joinCode });
-      alert('✅ New join code generated!');
-    } catch (error) {
-      console.error('Regenerate error:', error);
-      alert('❌ Failed to regenerate code: ' + (error.response?.data?.error || error.message));
-    } finally {
-      setRegenerating(false);
-    }
-  };
-
-  // ⭐ ADD THIS FUNCTION
   const handleCopyCode = () => {
     if (course?.join_code) {
       navigator.clipboard.writeText(course.join_code);
-      alert('✅ Join code copied to clipboard!');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
-  if (loading) return <LoadingSpinner message="Loading course..." />;
-  if (!course) return <div>Course not found</div>;
+  const handleRegenerateCode = async () => {
+    if (!window.confirm('Generate a new join code? The old code will stop working.')) return;
+    setRegenerating(true);
+    try {
+      const result = await courseService.regenerateJoinCode(courseId);
+      setCourse(c => ({ ...c, join_code: result.joinCode }));
+    } catch (e) { console.error(e); }
+    finally { setRegenerating(false); }
+  };
+
+  if (loading) return <PageLoader message="Loading course…" />;
+  if (!course)  return <div className="min-h-screen bg-[#F7F3EE] flex items-center justify-center"><p className="text-[#6B6560]">Course not found.</p></div>;
+
+  const isPastDue = (date) => new Date(date) < new Date();
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-purple-600 to-purple-700 text-white">
-        <div className="max-w-7xl mx-auto px-6 py-8">
-          <Link to="/courses" className="text-purple-100 hover:text-white mb-4 inline-block">
-            ← Back to Courses
+    <div className="min-h-screen bg-[#F7F3EE]">
+      {/* Sub-header */}
+      <div className="bg-white border-b border-[#E8E1D8] pt-16">
+        <div className="max-w-6xl mx-auto px-6 py-6">
+          <Link to="/courses" className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#A8A29E] hover:text-[#1A1714] mb-4 transition-colors">
+            <IconBack /> All Courses
           </Link>
-          <h1 className="text-4xl font-bold mb-2">
-            {course.course_code} - {course.course_name}
-          </h1>
-          <div className="flex items-center gap-6 text-purple-100">
-            <span>{course.instructor_name}</span>
-            <span>•</span>
-            <span>{course.semester} {course.year}</span>
-            <span>•</span>
-            <span>{students.length} Students</span>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-[#FEF3EC] text-[#CF7249]">{course.course_code}</span>
+                <span className="text-xs text-[#A8A29E]">{course.semester} {course.year}</span>
+              </div>
+              <h1 className="text-2xl font-bold text-[#1A1714]">{course.course_name}</h1>
+              <p className="text-sm text-[#6B6560] mt-1">
+                {isInstructor ? `${students.length} students enrolled` : `Instructor: ${course.instructor_name}`}
+              </p>
+            </div>
+            {isInstructor && (
+              <Link to={`/assignments/create?courseId=${courseId}`} className="btn-orange flex-shrink-0">
+                + New Assignment
+              </Link>
+            )}
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-6 mt-6">
+            {['assignments', isInstructor && 'students'].filter(Boolean).map(tab => (
+              <button key={tab} onClick={() => setActiveTab(tab)}
+                className={`pb-3 text-sm font-semibold capitalize border-b-2 transition-colors
+                  ${activeTab === tab ? 'border-[#CF7249] text-[#CF7249]' : 'border-transparent text-[#6B6560] hover:text-[#1A1714]'}`}>
+                {tab} {tab === 'assignments' ? `(${assignments.length})` : `(${students.length})`}
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Tabs */}
-        <div className="mb-6 border-b">
-          <div className="flex gap-8">
-            <button
-              onClick={() => setActiveTab('assignments')}
-              className={`pb-4 px-2 font-semibold transition-colors border-b-2 ${
-                activeTab === 'assignments'
-                  ? 'border-purple-600 text-purple-600'
-                  : 'border-transparent text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Assignments ({assignments.length})
-            </button>
-            {isInstructor && (
-              <button
-                onClick={() => setActiveTab('students')}
-                className={`pb-4 px-2 font-semibold transition-colors border-b-2 ${
-                  activeTab === 'students'
-                    ? 'border-purple-600 text-purple-600'
-                    : 'border-transparent text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                Students ({students.length})
-              </button>
-            )}
-          </div>
-        </div>
-
+      <div className="max-w-6xl mx-auto px-6 py-8">
         <div className="grid lg:grid-cols-3 gap-8">
-          {/* Main Content Area */}
-          <div className="lg:col-span-2">
-            {/* Assignments Tab */}
-            {activeTab === 'assignments' && (
-              <div>
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold text-gray-900">Assignments</h2>
-                  {isInstructor && (
-                    <Link
-                      to={`/assignments/create?courseId=${courseId}`}
-                      className="btn-primary"
-                    >
-                      + Create Assignment
-                    </Link>
-                  )}
-                </div>
 
+          {/* Main content */}
+          <div className="lg:col-span-2">
+
+            {/* Assignments tab */}
+            {activeTab === 'assignments' && (
+              <div className="space-y-3">
                 {assignments.length === 0 ? (
-                  <Card className="text-center py-12">
-                    <p className="text-gray-500 mb-4">No assignments yet</p>
+                  <div className="bg-white rounded-2xl border border-[#E8E1D8] p-12 text-center">
+                    <p className="text-[#6B6560] mb-4">No assignments yet.</p>
                     {isInstructor && (
-                      <Link
-                        to={`/assignments/create?courseId=${courseId}`}
-                        className="btn-primary"
-                      >
+                      <Link to={`/assignments/create?courseId=${courseId}`} className="btn-orange">
                         Create First Assignment
                       </Link>
                     )}
-                  </Card>
-                ) : (
-                  <div className="space-y-4">
-                    {assignments.map((assignment) => (
-                      <Card key={assignment.assignment_id} hover>
-                        <Link to={`/assignments/${assignment.assignment_id}`}>
-                          <div className="flex justify-between items-start">
-                            <div className="flex-1">
-                              <h3 className="text-xl font-bold text-gray-900 mb-2">
-                                {assignment.title}
-                              </h3>
-                              <p className="text-gray-600 mb-3 line-clamp-2">
-                                {assignment.description}
-                              </p>
-                              <div className="flex items-center gap-6 text-sm text-gray-500">
-                                <span className="flex items-center gap-1">
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                  </svg>
-                                  Due: {new Date(assignment.due_date).toLocaleDateString()}
-                                </span>
-                                <span className="flex items-center gap-1">
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                  </svg>
-                                  {assignment.submission_count || 0} submissions
-                                </span>
-                              </div>
-                            </div>
-                            <div className="ml-4">
-                              <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                                new Date(assignment.due_date) > new Date()
-                                  ? 'bg-green-100 text-green-700'
-                                  : 'bg-red-100 text-red-700'
-                              }`}>
-                                {new Date(assignment.due_date) > new Date() ? 'Open' : 'Closed'}
-                              </span>
-                            </div>
-                          </div>
-                        </Link>
-                      </Card>
-                    ))}
                   </div>
-                )}
+                ) : assignments.map(a => (
+                  <Link key={a.assignment_id} to={`/assignments/${a.assignment_id}`}
+                    className="block bg-white rounded-2xl border border-[#E8E1D8] p-5 hover:shadow-md hover:border-transparent transition-all">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-bold text-[#1A1714] mb-1">{a.title}</h3>
+                        <p className="text-sm text-[#6B6560] line-clamp-2 mb-3">{a.description}</p>
+                        <div className="flex items-center gap-4 text-xs text-[#A8A29E]">
+                          <span>Due {new Date(a.due_date).toLocaleDateString()}</span>
+                          <span>{a.submission_count || 0} submissions</span>
+                        </div>
+                      </div>
+                      <span className={`flex-shrink-0 text-[10px] font-bold px-2.5 py-1 rounded-full
+                        ${isPastDue(a.due_date) ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>
+                        {isPastDue(a.due_date) ? 'Closed' : 'Open'}
+                      </span>
+                    </div>
+                  </Link>
+                ))}
               </div>
             )}
 
-            {/* Students Tab */}
+            {/* Students tab */}
             {activeTab === 'students' && isInstructor && (
-              <div>
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold text-gray-900">Enrolled Students</h2>
-                </div>
-
+              <div className="bg-white rounded-2xl border border-[#E8E1D8] overflow-hidden">
                 {students.length === 0 ? (
-                  <Card className="text-center py-12">
-                    <p className="text-gray-500">No students enrolled yet</p>
-                    <p className="text-sm text-gray-400 mt-2">Share your join code with students</p>
-                  </Card>
+                  <div className="p-12 text-center">
+                    <p className="text-[#6B6560]">No students enrolled yet.</p>
+                    <p className="text-xs text-[#A8A29E] mt-1">Share the join code from the sidebar.</p>
+                  </div>
                 ) : (
-                  <Card>
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="border-b">
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Name</th>
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Email</th>
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Enrolled</th>
-                            <th className="text-right py-3 px-4 font-semibold text-gray-900">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {students.map((student) => (
-                            <tr key={student.user_id} className="border-b last:border-0 hover:bg-gray-50">
-                              <td className="py-3 px-4">
-                                {student.first_name} {student.last_name}
-                              </td>
-                              <td className="py-3 px-4 text-gray-600">{student.email}</td>
-                              <td className="py-3 px-4 text-gray-600">
-                                {new Date(student.enrolled_at).toLocaleDateString()}
-                              </td>
-                              <td className="py-3 px-4 text-right">
-                                <button className="text-purple-600 hover:text-purple-700 text-sm font-semibold">
-                                  View Profile
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Card>
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-[#F0EBE3]">
+                        {['Name', 'Email', 'Enrolled', ''].map(h => (
+                          <th key={h} className="py-3 px-5 text-left text-[10px] font-bold uppercase tracking-widest text-[#A8A29E]">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {students.map(s => (
+                        <tr key={s.user_id} className="border-b border-[#F0EBE3] last:border-0 hover:bg-[#F7F3EE]/50 transition-colors">
+                          <td className="py-3.5 px-5 text-sm font-semibold text-[#1A1714]">{s.first_name} {s.last_name}</td>
+                          <td className="py-3.5 px-5 text-sm text-[#6B6560]">{s.email}</td>
+                          <td className="py-3.5 px-5 text-xs text-[#A8A29E]">{new Date(s.enrolled_at).toLocaleDateString()}</td>
+                          <td className="py-3.5 px-5 text-right">
+                            <span className="text-xs text-[#A8A29E]">—</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 )}
               </div>
             )}
           </div>
 
-          {/* ⭐⭐⭐ SIDEBAR - ADD JOIN CODE CARD HERE ⭐⭐⭐ */}
-          <div className="space-y-6">
-            {/* JOIN CODE CARD (Instructor Only) */}
+          {/* Sidebar */}
+          <div className="space-y-4">
+            {/* Join code card */}
             {isInstructor && (
-              <Card>
-                <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-                  <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                  </svg>
-                  Course Join Code
-                </h3>
-                
-                <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 text-center">
-                  <p className="text-sm text-gray-600 mb-3">Share this code with students</p>
-                  
-                  {/* Join Code Display */}
-                  <div className="font-mono text-4xl font-bold text-purple-600 mb-4 tracking-wider select-all">
-                    {course.join_code || 'LOADING...'}
-                  </div>
-                  
-                  {/* Action Buttons */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleCopyCode}
-                      className="flex-1 bg-white hover:bg-gray-50 text-purple-600 font-semibold py-2 px-4 rounded-lg border-2 border-purple-600 transition-colors"
-                    >
-                      📋 Copy Code
-                    </button>
-                    <button
-                      onClick={handleRegenerateCode}
-                      disabled={regenerating}
-                      className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors disabled:bg-gray-400"
-                    >
-                      {regenerating ? '⏳' : '🔄'} Regenerate
-                    </button>
-                  </div>
-                </div>
-                
-                {/* Instructions */}
-                <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                  <p className="text-xs text-blue-800">
-                    💡 <strong>How it works:</strong> Students enter this code on the "Join Course" page to enroll in your class.
+              <div className="bg-white rounded-2xl border border-[#E8E1D8] p-5">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#A8A29E] mb-4">Join Code</p>
+                <div className="bg-[#F7F3EE] rounded-xl p-4 text-center mb-4">
+                  <p className="text-xs text-[#A8A29E] mb-2">Share with students</p>
+                  <p className="font-mono text-3xl font-bold text-[#CF7249] tracking-widest select-all">
+                    {course.join_code || '———'}
                   </p>
                 </div>
-              </Card>
+                <div className="flex gap-2">
+                  <button onClick={handleCopyCode}
+                    className="flex-1 py-2 rounded-xl border border-[#E8E1D8] text-xs font-bold text-[#1A1714] hover:bg-[#F7F3EE] transition-colors">
+                    {copied ? '✓ Copied' : 'Copy'}
+                  </button>
+                  <button onClick={handleRegenerateCode} disabled={regenerating}
+                    className="flex-1 py-2 rounded-xl bg-[#CF7249] text-white text-xs font-bold hover:bg-[#B85E38] transition-colors disabled:opacity-50">
+                    {regenerating ? 'Generating…' : 'Regenerate'}
+                  </button>
+                </div>
+              </div>
             )}
 
-            {/* Other sidebar cards... */}
+            {/* Course info */}
+            <div className="bg-white rounded-2xl border border-[#E8E1D8] p-5">
+              <p className="text-xs font-bold uppercase tracking-widest text-[#A8A29E] mb-4">Course Info</p>
+              <div className="space-y-3 text-sm">
+                {[
+                  ['Code',     course.course_code],
+                  ['Semester', `${course.semester} ${course.year}`],
+                  ['Students', students.length || course.student_count || 0],
+                  ['Assignments', assignments.length],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex justify-between">
+                    <span className="text-[#A8A29E]">{label}</span>
+                    <span className="font-semibold text-[#1A1714]">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>

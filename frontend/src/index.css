@@ -1,21 +1,53 @@
-@import url('https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Only keep things Tailwind can't do: scrollbar + base resets */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow-x: hidden; background: #F7F3EE; font-family: 'DM Sans', system-ui, sans-serif; }
+
+::-webkit-scrollbar       { width: 8px; }
+::-webkit-scrollbar-track { background: #F0EBE3; }
+::-webkit-scrollbar-thumb { background: #CF7249; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #B85E38; }
+
+@layer components {
+  /* ── Buttons ── */
+  .btn-orange {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 rounded-xl
+           bg-[#CF7249] text-white text-sm font-semibold
+           hover:bg-[#B85E38] transition-colors shadow-sm;
+  }
+  .btn-teal {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 rounded-xl
+           bg-[#2D6A6A] text-white text-sm font-semibold
+           hover:bg-[#245757] transition-colors shadow-sm;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 rounded-xl
+           border border-[#E8E1D8] bg-white text-sm font-semibold
+           text-[#1A1714] hover:bg-[#F7F3EE] transition-colors;
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 rounded-xl
+           bg-[#1A1714] text-white text-sm font-semibold
+           hover:bg-[#2D2825] transition-colors;
+  }
+
+  /* ── Layout ── */
+  .page-header {
+    @apply fixed top-0 left-0 right-0 z-50 bg-[#F7F3EE]/95
+           backdrop-blur-sm border-b border-[#E8E1D8]/80;
+  }
+  .page-nav {
+    @apply max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between;
+  }
 }
 
-body {
-  overflow-x: hidden;
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(207,114,73,0.4); }
+  70%  { box-shadow: 0 0 0 10px rgba(207,114,73,0); }
+  100% { box-shadow: 0 0 0 0 rgba(207,114,73,0); }
 }
-
-::-webkit-scrollbar       { width: 10px; }
-::-webkit-scrollbar-track { background: #f3f4f6; }
-::-webkit-scrollbar-thumb { background: #9333ea; border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: #7e22ce; }
+.animate-pulse-ring { animation: pulse-ring 2s ease-in-out infinite; }

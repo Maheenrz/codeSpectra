@@ -1,18 +1,24 @@
-import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { useAuth } from "../../context/AuthContext";
-import courseService from "../../services/courseService";
-import LoadingSpinner from "../../components/common/LoadingSpinner";
-import Card from "../../components/common/Card";
+import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+import courseService from '../../services/courseService';
+import PageLoader from '../../Components/common/PageLoader';
+
+const ACCENTS = [
+  { accent: '#CF7249', bg: '#FEF3EC' },
+  { accent: '#2D6A6A', bg: '#EBF4F4' },
+  { accent: '#C4827A', bg: '#FAEDEC' },
+  { accent: '#8B9BB4', bg: '#EFF2F7' },
+];
+
+const IconLogOut = () => (<svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>);
 
 const CourseList = () => {
-  const { user, isInstructor } = useAuth();
+  const { user, isInstructor, logout } = useAuth();
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchCourses();
-  }, []);
+  useEffect(() => { fetchCourses(); }, []);
 
   const fetchCourses = async () => {
     try {
@@ -20,122 +26,68 @@ const CourseList = () => {
         ? await courseService.getInstructorCourses()
         : await courseService.getStudentCourses();
       setCourses(data);
-    } catch (error) {
-      console.error("Error fetching courses:", error);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   };
 
-  if (loading) return <LoadingSpinner message="Loading courses..." />;
+  if (loading) return <PageLoader message="Loading courses…" />;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">My Courses</h1>
-              <p className="text-gray-600 mt-1">
-                {isInstructor ? "Manage your courses" : "Your enrolled courses"}
-              </p>
-            </div>
-            
-            <div className="flex gap-3">
-              <Link to="/dashboard" className="btn-secondary">
-                ← Dashboard
-              </Link>
-              {isInstructor ? (
-                <Link to="/courses/create" className="btn-primary">
-                  + Create Course
-                </Link>
-              ) : (
-                <Link to="/courses/join" className="btn-primary">
-                  + Join Course
-                </Link>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        {courses.length === 0 ? (
-          <Card className="text-center py-12">
-            <svg
-              className="w-16 h-16 text-gray-400 mx-auto mb-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
-              />
-            </svg>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
-              No courses yet
-            </h3>
-            <p className="text-gray-600 mb-6">
-              {isInstructor
-                ? "Create your first course to get started"
-                : "You are not enrolled in any courses yet"}
+    <div className="min-h-screen bg-[#F7F3EE]">
+      <main className="max-w-6xl mx-auto px-6 pt-20 pb-12">
+        <div className="flex items-end justify-between mb-10">
+          <div>
+            <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#CF7249] mb-2">
+              {isInstructor ? 'Teaching' : 'Enrolled in'}
             </p>
-            {isInstructor ? (
-              <Link to="/courses/create" className="btn-primary">
-                Create Your First Course
-              </Link>
-            ) : (
-              <Link to="/courses/join" className="btn-primary">
-                Join a Course
-              </Link>
-            )}
-          </Card>
-        ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {courses.map((course) => (
-              <Card key={course.course_id} hover className="flex flex-col">
-                <Link to={`/courses/${course.course_id}`} className="flex-1">
-                  <div className="mb-4">
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="text-xl font-bold text-gray-900">
-                        {course.course_code}
-                      </h3>
-                      <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold">
-                        {course.semester} {course.year}
-                      </span>
-                    </div>
-                    <p className="text-gray-700 font-medium mb-2">
-                      {course.course_name}
-                    </p>
-                    <p className="text-gray-600 text-sm">
-                      {isInstructor ? "Instructor" : course.instructor_name}
-                    </p>
-                  </div>
+            <h1 className="text-4xl font-bold text-[#1A1714]">My Courses</h1>
+            <p className="text-[#6B6560] mt-1">{courses.length} course{courses.length !== 1 ? 's' : ''}</p>
+          </div>
+          {isInstructor
+            ? <Link to="/courses/create" className="btn-orange">+ New course</Link>
+            : <Link to="/courses/join" className="btn-orange">+ Join course</Link>}
+        </div>
 
-                  <div className="grid grid-cols-2 gap-4 pt-4 border-t">
-                    <div>
-                      <p className="text-gray-500 text-xs">Students</p>
-                      <p className="text-xl font-bold text-purple-600">
-                        {course.student_count || 0}
-                      </p>
+        {courses.length === 0 ? (
+          <div className="bg-white rounded-3xl border border-[#E8E1D8] py-24 text-center">
+            <h2 className="text-xl font-bold text-[#1A1714] mb-3">
+              {isInstructor ? 'Create your first course' : 'Join your first course'}
+            </h2>
+            <p className="text-[#6B6560] mb-8 max-w-sm mx-auto">
+              {isInstructor ? 'Set up a course and invite students.' : 'Enter a join code from your instructor.'}
+            </p>
+            {isInstructor
+              ? <Link to="/courses/create" className="btn-orange">Create course</Link>
+              : <Link to="/courses/join" className="btn-orange">Join course</Link>}
+          </div>
+        ) : (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {courses.map((c, idx) => {
+              const A = ACCENTS[idx % ACCENTS.length];
+              return (
+                <Link key={c.course_id} to={`/courses/${c.course_id}`}
+                  className="group bg-white rounded-2xl border border-[#E8E1D8] overflow-hidden hover:shadow-md hover:border-transparent transition-all">
+                  <div className="h-1.5 w-full" style={{ background: A.accent }} />
+                  <div className="p-6">
+                    <div className="flex items-start justify-between mb-4">
+                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-full" style={{ background: A.bg, color: A.accent }}>
+                        {c.course_code}
+                      </span>
+                      <span className="text-[10px] text-[#A8A29E]">{c.semester} {c.year}</span>
                     </div>
-                    <div>
-                      <p className="text-gray-500 text-xs">Assignments</p>
-                      <p className="text-xl font-bold text-purple-600">
-                        {course.assignment_count || 0}
-                      </p>
+                    <h3 className="text-lg font-bold text-[#1A1714] mb-1">{c.course_name}</h3>
+                    <p className="text-xs text-[#A8A29E] mb-5">{isInstructor ? 'You are teaching' : c.instructor_name}</p>
+                    <div className="flex items-center gap-5 pt-4 border-t border-[#F0EBE3] text-xs text-[#6B6560]">
+                      <span><strong className="text-[#1A1714]">{c.student_count || 0}</strong> students</span>
+                      <span><strong className="text-[#1A1714]">{c.assignment_count || 0}</strong> assignments</span>
                     </div>
                   </div>
                 </Link>
-              </Card>
-            ))}
+              );
+            })}
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 };

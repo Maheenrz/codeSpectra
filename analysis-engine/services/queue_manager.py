@@ -1,214 +1,124 @@
+# analysis-engine/utils/queue_manager.py
 import asyncio
-import time
-from typing import List, Dict, Optional
-from dataclasses import dataclass, field
-from datetime import datetime
+import uuid
 import json
+import redis
+import logging
+from typing import List, Dict, Optional
+from datetime import datetime
+from pathlib import Path
 
-@dataclass
-class AnalysisJob:
-    """Represents a single analysis job"""
-    job_id: str
-    assignment_id: int
-    pairs: List[Dict]  # List of {student_a_id, student_b_id, files_a, files_b, question_id}
-    total_pairs: int
-    completed_pairs: int = 0
-    failed_pairs: int = 0
-    status: str = "pending"  # pending, processing, partial, completed, failed
-    results: List[Dict] = field(default_factory=list)
-    errors: List[Dict] = field(default_factory=list)
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    timeout_seconds: int = 900  # 15 minutes
-    
-    def progress_percentage(self) -> float:
-        """Calculate progress percentage"""
-        if self.total_pairs == 0:
-            return 0
-        return (self.completed_pairs / self.total_pairs) * 100
-    
-    def is_timeout(self) -> bool:
-        """Check if job has timed out"""
-        if not self.started_at:
-            return False
-        elapsed = (datetime.now() - self.started_at).total_seconds()
-        return elapsed > self.timeout_seconds
-    
-    def to_dict(self) -> Dict:
-        """Convert to dictionary for JSON serialization"""
-        return {
-            'job_id': self.job_id,
-            'assignment_id': self.assignment_id,
-            'total_pairs': self.total_pairs,
-            'completed_pairs': self.completed_pairs,
-            'failed_pairs': self.failed_pairs,
-            'status': self.status,
-            'progress': self.progress_percentage(),
-            'started_at': self.started_at.isoformat() if self.started_at else None,
-            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
-            'results_count': len(self.results),
-            'errors_count': len(self.errors)
-        }
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("QueueManager")
 
+# Initialize Redis client
+redis_client = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
 
 class AnalysisQueueManager:
-    """
-    Manages analysis jobs with queue-based retry system
-    Handles partial results and timeout recovery
-    """
-    
     def __init__(self):
-        self.jobs: Dict[str, AnalysisJob] = {}
         self.processing_queue: asyncio.Queue = asyncio.Queue()
-        self.max_concurrent_jobs = 3
+        self.max_concurrent_jobs = 2  # Limits CPU thrashing during Type-4
         self.worker_tasks = []
-    
+
+    def _save_job(self, job_data: dict):
+        """Persist job state to Redis with 24h expiry"""
+        job_id = job_data['job_id']
+        try:
+            # Helper to make results JSON serializable (converts Paths to strings)
+            serialized_data = json.dumps(job_data, default=str)
+            redis_client.set(f"job:{job_id}", serialized_data, ex=86400)
+        except Exception as e:
+            logger.error(f"Failed to save job {job_id} to Redis: {e}")
+
+    def _load_job(self, job_id: str) -> Optional[dict]:
+        """Retrieve job state from Redis"""
+        data = redis_client.get(f"job:{job_id}")
+        return json.loads(data) if data else None
+
+    async def submit_job(self, assignment_id: int, pairs: List[Dict]) -> str:
+        """Create a new job and push it to the processing queue"""
+        job_id = str(uuid.uuid4())
+        job_data = {
+            'job_id': job_id,
+            'assignment_id': assignment_id,
+            'pairs': pairs,
+            'total_pairs': len(pairs),
+            'completed_pairs': 0,
+            'failed_pairs': 0,
+            'status': "pending",
+            'results': [],
+            'errors': [],
+            'started_at': None,
+            'completed_at': None,
+            'progress': 0.0
+        }
+        self._save_job(job_data)
+        await self.processing_queue.put(job_id)
+        logger.info(f"Job {job_id} submitted for assignment {assignment_id}")
+        return job_id
+
+    async def get_job_status(self, job_id: str) -> Optional[Dict]:
+        """Public API to poll job status"""
+        return self._load_job(job_id)
+
     async def start_workers(self):
-        """Start background worker tasks"""
+        """Initialize the worker pool"""
         for i in range(self.max_concurrent_jobs):
             task = asyncio.create_task(self._worker(i))
             self.worker_tasks.append(task)
-    
-    async def stop_workers(self):
-        """Stop all workers"""
-        for task in self.worker_tasks:
-            task.cancel()
-        await asyncio.gather(*self.worker_tasks, return_exceptions=True)
-    
-    async def submit_job(self, assignment_id: int, pairs: List[Dict]) -> str:
-        """
-        Submit a new analysis job
-        Returns job_id for tracking
-        """
-        import uuid
-        
-        job_id = str(uuid.uuid4())
-        job = AnalysisJob(
-            job_id=job_id,
-            assignment_id=assignment_id,
-            pairs=pairs,
-            total_pairs=len(pairs)
-        )
-        
-        self.jobs[job_id] = job
-        await self.processing_queue.put(job_id)
-        
-        return job_id
-    
-    async def get_job_status(self, job_id: str) -> Optional[Dict]:
-        """Get job status"""
-        job = self.jobs.get(job_id)
-        if not job:
-            return None
-        return job.to_dict()
-    
-    async def get_job_results(self, job_id: str) -> Optional[Dict]:
-        """Get job results (including partial results)"""
-        job = self.jobs.get(job_id)
-        if not job:
-            return None
-        
-        return {
-            **job.to_dict(),
-            'results': job.results,
-            'errors': job.errors
-        }
-    
+        logger.info(f"Started {self.max_concurrent_jobs} analysis workers")
+
     async def _worker(self, worker_id: int):
-        """Background worker that processes jobs"""
-        print(f"Worker {worker_id} started")
+        """Background worker that pulls jobs from the queue"""
+        # Lazy imports to prevent circular dependencies
+        from engine.analyzer import CloneAnalyzer, AnalyzerConfig
         
+        # Initialize analyzer with standard educational config
+        config = AnalyzerConfig()
+        analyzer = CloneAnalyzer(config)
+
         while True:
-            try:
-                # Get next job from queue
-                job_id = await self.processing_queue.get()
-                job = self.jobs.get(job_id)
-                
-                if not job:
-                    continue
-                
-                print(f"Worker {worker_id} processing job {job_id}")
-                
-                # Mark as processing
-                job.status = "processing"
-                job.started_at = datetime.now()
-                
-                # Process job
-                await self._process_job(job)
-                
-                # Mark task as done
-                self.processing_queue.task_done()
-                
-            except asyncio.CancelledError:
-                print(f"Worker {worker_id} cancelled")
-                break
-            except Exception as e:
-                print(f"Worker {worker_id} error: {e}")
-    
-    async def _process_job(self, job: AnalysisJob):
-        """Process a single job"""
-        from .analyzer import CodeAnalyzer
-        
-        analyzer = CodeAnalyzer()
-        
-        # Process each pair
-        for i, pair in enumerate(job.pairs):
-            # Check timeout
-            if job.is_timeout():
-                print(f"Job {job.job_id} timed out after {job.timeout_seconds}s")
-                job.status = "partial"
-                
-                # Re-queue remaining pairs
-                remaining_pairs = job.pairs[i:]
-                if remaining_pairs:
-                    print(f"Re-queuing {len(remaining_pairs)} remaining pairs")
-                    new_job_id = await self.submit_job(job.assignment_id, remaining_pairs)
-                    job.errors.append({
-                        'type': 'timeout',
-                        'message': f'Timeout after {job.completed_pairs} pairs. Remaining queued as job {new_job_id}'
-                    })
-                
-                break
+            job_id = await self.processing_queue.get()
+            job = self._load_job(job_id)
             
-            try:
-                # Analyze pair
-                result = await asyncio.to_thread(
-                    analyzer.compare_submissions,
-                    pair['files_a'],
-                    pair['files_b'],
-                    pair.get('question_id')
-                )
-                
-                # Add metadata
-                result['student_a_id'] = pair['student_a_id']
-                result['student_b_id'] = pair['student_b_id']
-                result['question_id'] = pair.get('question_id')
-                
-                job.results.append(result)
-                job.completed_pairs += 1
-                
-            except Exception as e:
-                print(f"Error processing pair: {e}")
-                job.failed_pairs += 1
-                job.errors.append({
-                    'pair_index': i,
-                    'student_a_id': pair['student_a_id'],
-                    'student_b_id': pair['student_b_id'],
-                    'error': str(e)
-                })
-        
-        # Update final status
-        if job.completed_pairs == job.total_pairs:
-            job.status = "completed"
-        elif job.completed_pairs > 0:
-            job.status = "partial"
-        else:
-            job.status = "failed"
-        
-        job.completed_at = datetime.now()
-        
-        print(f"Job {job.job_id} finished: {job.status}, {job.completed_pairs}/{job.total_pairs} pairs")
+            if not job:
+                self.processing_queue.task_done()
+                continue
 
+            logger.info(f"Worker-{worker_id} starting job {job_id}")
+            job['status'] = "processing"
+            job['started_at'] = datetime.now().isoformat()
+            self._save_job(job)
 
-# Global queue manager instance
-queue_manager = AnalysisQueueManager()
+            for i, pair in enumerate(job['pairs']):
+                try:
+                    # Threading used because Type-4/Joern/Compilation are CPU heavy 
+                    # and would otherwise block the entire FastAPI event loop.
+                    # We call analyze_for_assignment which is the correct entry point in v3.0
+                    result = await asyncio.to_thread(
+                        analyzer.analyze_for_assignment,
+                        pair['files_a'],
+                        pair['files_b']
+                    )
+                    
+                    if result:
+                        job['results'].append(result)
+                    
+                    job['completed_pairs'] += 1
+                except Exception as e:
+                    logger.error(f"Error in job {job_id} pair {i}: {e}")
+                    job['failed_pairs'] += 1
+                    job['errors'].append({"pair": i, "error": str(e)})
+                
+                # Update progress incrementally
+                job['progress'] = round((job['completed_pairs'] / job['total_pairs']) * 100, 2)
+                self._save_job(job)
+
+            job['status'] = "completed"
+            job['completed_at'] = datetime.now().isoformat()
+            job['progress'] = 100.0
+            self._save_job(job)
+            
+            logger.info(f"Worker-{worker_id} finished job {job_id}")
+            self.processing_queue.task_done()

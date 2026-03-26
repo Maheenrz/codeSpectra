@@ -34,8 +34,27 @@ const analysisService = {
   async analyzeFiles(formData) {
     const response = await api.post('/analysis/files', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120000,
+      timeout: 600000,   // 10 min — large batches of files take time
     });
+    return response.data;
+  },
+
+  // ── Class ZIP async flow ───────────────────────────────────────────────
+  // Upload a single class ZIP (containing student ZIPs or folders).
+  // Returns {job_id, status, total_students, student_names}.
+  async analyzeClassZip(zipFile) {
+    const form = new FormData();
+    form.append('file', zipFile);
+    const response = await api.post('/analysis/zip', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,    // 2 min for large ZIP uploads
+    });
+    return response.data;
+  },
+
+  // Poll a class-ZIP analysis job until complete.
+  async pollZipResults(jobId) {
+    const response = await api.get(`/analysis/zip/results/${jobId}`);
     return response.data;
   },
 

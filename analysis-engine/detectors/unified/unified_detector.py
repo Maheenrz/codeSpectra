@@ -394,11 +394,11 @@ class UnifiedDetector:
         """
         if type1_score >= 0.95:
             return "type1"
-        if type2_score >= 0.80:
+        if type2_score >= 0.65:   # was 0.80 — dilution fix
             return "type2"
         if type3_score >= 0.50:
             return "type3"
-        if type4_score >= 0.60:
+        if type4_score >= 0.70:   # was 0.60 — prevent false type4
             return "type4"
         return "none"
 

@@ -1,87 +1,127 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const stats = [
-  { title: '99% Accuracy',        sub: 'Industry-leading precision' },
-  { title: '10K+ Files Analyzed', sub: 'Trusted by developers'      },
-  { title: '500+ Happy Users',    sub: 'Growing community'          },
-];
-
-const CheckIcon = () => (
-  <svg className="w-5 h-5 text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-);
+// ─── Animated counter (CSS-only via Tailwind) ─────────────────────────────────
 
 const Hero = () => {
   const navigate = useNavigate();
+
   return (
-    <section className="min-h-screen bg-white pt-20">
-      <div className="flex items-center min-h-screen">
+    <section className="min-h-screen bg-[#F7F3EE] flex items-center pt-14">
+      <div className="max-w-6xl mx-auto px-6 py-20 w-full">
+        <div className="grid lg:grid-cols-2 gap-16 items-center">
 
-        {/* ── LEFT: Text ── push it in from left, right padding keeps gap from card */}
-        <div className="w-1/2 pl-16 xl:pl-24 pr-6 flex flex-col justify-center py-16">
-
-          <h1 className="font-extrabold text-gray-900 leading-tight mb-6" style={{ fontSize: 'clamp(2.4rem, 3.8vw, 3.6rem)' }}>
-            {/* Line 1: Detect + "Code Plagiarism" in indigo — stays on one line */}
-            <span className="block whitespace-nowrap">
-              Detect <span className="text-indigo-400">Code Plagiarism</span>
-            </span>
-            {/* Line 2 */}
-            <span className="block whitespace-nowrap">
-              with <span className="text-indigo-400">AI-powered</span>
-            </span>
-            {/* Line 3 */}
-            <span className="block">precision.</span>
-          </h1>
-
-          <p className="text-gray-400 text-lg mb-10 max-w-md leading-relaxed">
-            Advanced detection powered by Type 1–4 semantic and structural algorithms.
-          </p>
-
-          <div className="flex flex-wrap gap-4">
-            <button
-              onClick={() => navigate('/register')}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-xl text-base font-semibold transition-colors shadow-md"
-            >
-              Get Started →
-            </button>
-            <button className="border-2 border-indigo-400 text-indigo-500 hover:bg-indigo-50 px-8 py-4 rounded-xl text-base font-semibold transition-colors">
-              Watch Demo ▶
-            </button>
-          </div>
-        </div>
-
-        {/* ── RIGHT: Card — minimal right padding so it sits close to screen edge ── */}
-        <div className="w-1/2 pr-20 pl-4 flex items-center justify-end">
-          <div className="bg-indigo-100 rounded-3xl p-4 w-full max-w-lg shadow-lg">
-
-            {/* Top white card */}
-            <div className="bg-white rounded-2xl px-10 py-10 flex flex-col items-center text-center mb-4 shadow-sm">
-              <div className="w-20 h-20 bg-indigo-400 rounded-full flex items-center justify-center mb-5 shadow-md">
-                <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                </svg>
-              </div>
-              <h3 className="text-3xl font-bold text-indigo-600 mb-1">AI Analysis</h3>
-              <p className="text-gray-400 text-sm">Deep code analysis in seconds</p>
+          {/* ── LEFT ── */}
+          <div>
+            {/* Pill badge */}
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white border border-[#E8E1D8] text-xs font-semibold text-[#CF7249] mb-8 shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#CF7249] animate-pulse" />
+              Type 1–4 Clone Detection
             </div>
 
-            {/* Stat rows */}
-            <div className="flex flex-col gap-3">
-              {stats.map((s, i) => (
-                <div key={i} className="bg-white rounded-2xl px-5 py-4 flex items-center gap-4 shadow-sm">
-                  <CheckIcon />
-                  <div>
-                    <p className="font-bold text-gray-800 text-sm">{s.title}</p>
-                    <p className="text-gray-400 text-xs mt-0.5">{s.sub}</p>
-                  </div>
-                </div>
+            {/* Headline — Pixelify for "Plagiarism", DM Sans for rest */}
+            <h1 className="text-[clamp(2.8rem,6vw,5rem)] font-bold text-[#1A1714] leading-[1.08] tracking-tight mb-6">
+              Detect Code<br />
+              <span
+                className="text-[#CF7249]"
+                style={{ fontFamily: "'Pixelify Sans', monospace" }}
+              >
+                Plagiarism
+              </span>
+              <br />
+              with Precision.
+            </h1>
+
+            <p className="text-lg text-[#6B6560] mb-10 max-w-md leading-relaxed">
+              Advanced structural and semantic detection across all 4 clone types.
+              Built for educators, designed for accuracy.
+            </p>
+
+            <div className="flex flex-wrap gap-3 mb-10">
+              <button
+                onClick={() => navigate('/register')}
+                className="inline-flex items-center gap-2 px-7 py-3.5 rounded-2xl bg-[#CF7249] text-white font-semibold text-base hover:bg-[#B85E38] transition-colors shadow-lg shadow-[#CF7249]/20"
+              >
+                Get Started
+                <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7"/>
+                </svg>
+              </button>
+              <button
+                onClick={() => navigate('/login')}
+                className="inline-flex items-center gap-2 px-7 py-3.5 rounded-2xl bg-white border border-[#E8E1D8] text-[#1A1714] font-semibold text-base hover:bg-[#F7F3EE] transition-colors"
+              >
+                Sign in
+              </button>
+            </div>
+
+            {/* Language strip */}
+            <div className="flex flex-wrap gap-2">
+              {['C++', 'Java', 'Python', 'JavaScript', 'TypeScript'].map(l => (
+                <span key={l} className="text-xs font-semibold px-3 py-1.5 rounded-full bg-white border border-[#E8E1D8] text-[#6B6560]">{l}</span>
               ))}
             </div>
           </div>
-        </div>
 
+          {/* ── RIGHT — redesigned card cluster ── */}
+          <div className="relative">
+            {/* Main analysis card */}
+            <div className="bg-white rounded-3xl border border-[#E8E1D8] shadow-xl shadow-black/5 p-7">
+              <div className="flex items-start justify-between mb-6">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#A8A29E] mb-1">Live Analysis</p>
+                  <p className="text-base font-bold text-[#1A1714]">Assignment #3 — Data Structures</p>
+                </div>
+                <span className="flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-full bg-[#EBF4F4] text-[#2D6A6A]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#2D6A6A] animate-pulse" />
+                  Running
+                </span>
+              </div>
+
+              {/* Score rows — big orange bar cards */}
+              <div className="space-y-2.5 mb-6">
+                {[
+                  { label: 'Type-1 Exact Copy',   val: 92, color: '#C4827A', bg: '#FAEDEC' },
+                  { label: 'Type-2 Renamed Vars',  val: 78, color: '#CF7249', bg: '#FEF3EC' },
+                  { label: 'Type-3 Structural',    val: 61, color: '#2D6A6A', bg: '#EBF4F4' },
+                  { label: 'Type-4 Semantic',      val: 44, color: '#8B9BB4', bg: '#EFF2F7' },
+                ].map(({ label, val, color, bg }) => (
+                  <div key={label} className="flex items-center gap-3 px-4 py-3 rounded-2xl" style={{ background: bg }}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-center mb-1.5">
+                        <span className="text-xs font-semibold" style={{ color }}>{label}</span>
+                        <span className="text-sm font-black" style={{ color }}>{val}%</span>
+                      </div>
+                      <div className="h-1.5 bg-white/70 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${val}%`, background: color }} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Alert row */}
+              <div className="flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-[#FAEDEC] border border-[#F0C4C0]">
+                <div className="w-7 h-7 rounded-xl bg-[#C4827A]/20 flex items-center justify-center flex-shrink-0">
+                  <svg width="14" height="14" fill="none" stroke="#C4827A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </div>
+                <p className="text-sm font-semibold text-[#C4827A]">3 pairs flagged for review</p>
+              </div>
+            </div>
+
+            {/* Floating stat chips */}
+            <div className="absolute -top-4 -right-4 bg-[#CF7249] text-white px-4 py-2.5 rounded-2xl shadow-lg shadow-[#CF7249]/30 text-xs font-bold">
+              99% accuracy
+            </div>
+            <div className="absolute -bottom-4 -left-4 bg-white border border-[#E8E1D8] px-4 py-2.5 rounded-2xl shadow-lg text-xs font-bold text-[#1A1714] flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#2D6A6A]" />
+              24 submissions analyzed
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );

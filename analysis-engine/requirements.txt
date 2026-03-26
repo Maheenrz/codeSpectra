@@ -29,3 +29,6 @@ lizard==1.17.10
 radon==6.0.1
 networkx==3.2.1
 lxml==5.1.0
+
+redis
+hiredis

@@ -2,38 +2,38 @@
 """
 Type-4 Detector — unified adapter for engine/analyzer.py
 
-Wraps JoernDetector (primary) with custom_pdg fallback.
-Provides the interface that engine/analyzer.py expects:
+Architecture:
+  Primary:  EducationalType4Detector
+              │
+              ├── AlgorithmClassifier   (static signature, problem category)
+              ├── IOBehavioralTester    (compile + run with harness, compare outputs)
+              └── JoernDetector         (PDG WL-kernel, if Docker available)
 
-    detect(file_a, file_b, include_features=False)
+  Fallback: If EducationalType4Detector fails to initialize (no g++, etc.),
+            falls back to the legacy custom_pdg detector.
+
+Public interface (used by engine/analyzer.py):
+    detector.detect(file_a, file_b, include_features=False)
     → {
-        "semantic_score": float,
+        "semantic_score":    float,
         "is_semantic_clone": bool,
-        "confidence": str,           # HIGH / MEDIUM / LOW / UNLIKELY
-        "category_scores": {
-            "control_flow": float,
-            "data_flow": float,
-            "call_pattern": float,
-            "structural": float,
-            "behavioral": float,
-        },
-        "features_a": {"behavioral_hash": str, ...},
-        "features_b": {"behavioral_hash": str, ...},
+        "confidence":        str,
+        "backend":           str,
+        "category_scores":   {...},
+        ...
       }
-
-    prepare_batch(file_paths) — no-op (kept for API compatibility)
-    clear_cache()             — no-op (kept for API compatibility)
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Extension → language for Joern
+# Extension → language
 _EXT_LANG: Dict[str, str] = {
     ".py":   "python",
     ".java": "java",
@@ -44,56 +44,113 @@ _EXT_LANG: Dict[str, str] = {
     ".c":    "c",
     ".cpp":  "cpp", ".cc": "cpp", ".cxx": "cpp",
     ".h":    "cpp", ".hpp": "cpp",
-    ".go":   "go",
-    ".php":  "php",
 }
 
 
 class Type4Detector:
     """
-    Unified Type-4 semantic clone detector.
+    Unified Type-4 semantic clone detector with educational pipeline.
 
-    Tries Joern first; falls back to custom_pdg if Joern / Docker
-    is unavailable.
+    Init order:
+      1. Try EducationalType4Detector (our custom pipeline).
+      2. If educational detector is ready but Joern is also available,
+         the educational detector automatically gets the Joern PDG signal.
+      3. If educational detector cannot init, fall back to custom_pdg.
+      4. If custom_pdg also fails, the detector is "unavailable" and
+         all detections return zero scores.
     """
 
-    def __init__(self, threshold: float = 0.55):
+    def __init__(self, threshold: float = 0.60) -> None:
         self.threshold = threshold
-        self._joern: Any   = None
-        self._custom: Any  = None
-        self._mode: str    = "uninitialized"
+        self._edu:     Any = None
+        self._custom:  Any = None
+        self._joern:   Any = None
+        self._mode:    str = "uninitialized"
         self._init_backend()
 
-    # ─── backend initialization ────────────────────────────────────────
+    # ─── initialization ───────────────────────────────────────────────────────
 
     def _init_backend(self) -> None:
-        """Try to load Joern; fall back to custom_pdg."""
-        try:
-            from detectors.type4.joern.joern_detector import JoernDetector
-            detector = JoernDetector(auto_start=True)
-            # Quick sanity — did Docker come up?
-            status = detector.get_status()
-            if status.get("docker_available") and status.get("container_running"):
-                self._joern = detector
-                self._mode  = "joern"
-                logger.info("✅ [Type4] Using Joern PDG backend")
-                return
-            else:
-                logger.warning("⚠️  [Type4] Joern container not running — falling back")
-        except Exception as e:
-            logger.warning(f"⚠️  [Type4] Joern init failed ({e}) — falling back to custom_pdg")
+        """
+        Try to initialize the educational detector.
+        Falls back to custom_pdg if anything critical fails.
+        """
+        logger.info("[Type4Detector] Initializing backend…")
 
-        # Fallback
+        # ── Step 1: try to load Joern (optional — educational works without it) ──
+        joern_detector = self._try_load_joern()
+
+        # ── Step 2: load the educational detector ─────────────────────────────
+        try:
+            from detectors.type4.educational import EducationalType4Detector
+
+            # Check g++ is available (needed for C++ I/O testing)
+            g_plus_plus = shutil.which("g++")
+            if not g_plus_plus:
+                logger.warning(
+                    "[Type4Detector] g++ not found on PATH — "
+                    "I/O testing for C++ will be disabled"
+                )
+
+            self._edu = EducationalType4Detector(
+                joern_detector  = joern_detector,
+                io_threshold    = self.threshold,
+                enable_io       = True,
+                enable_joern    = joern_detector is not None,
+            )
+            self._mode = "educational"
+            logger.info(
+                "✅ [Type4Detector] Using EDUCATIONAL pipeline "
+                "(joern=%s, io_testing=%s)",
+                joern_detector is not None,
+                g_plus_plus is not None,
+            )
+            return
+
+        except ImportError as exc:
+            logger.warning("[Type4Detector] Educational module import failed: %s", exc)
+        except Exception as exc:
+            logger.warning("[Type4Detector] Educational detector init error: %s", exc)
+
+        # ── Step 3: fall back to custom_pdg ───────────────────────────────────
         try:
             from detectors.type4.custom_pdg.pdg_detector import Type4PDGDetector
             self._custom = Type4PDGDetector(threshold=self.threshold)
             self._mode   = "custom_pdg"
-            logger.info("✅ [Type4] Using custom PDG backend (fallback)")
-        except Exception as e:
-            logger.error(f"❌ [Type4] Both backends failed: {e}")
-            self._mode = "unavailable"
+            logger.info("⚠️  [Type4Detector] Fallback: using custom_pdg backend")
+            return
+        except Exception as exc:
+            logger.error("[Type4Detector] custom_pdg fallback failed: %s", exc)
 
-    # ─── public API used by engine/analyzer.py ─────────────────────────
+        # ── Step 4: unavailable ────────────────────────────────────────────────
+        self._mode = "unavailable"
+        logger.error("❌ [Type4Detector] All backends failed — Type-4 will return zeros")
+
+    def _try_load_joern(self) -> Optional[Any]:
+        """
+        Attempt to load JoernDetector. Returns instance or None (never raises).
+        """
+        try:
+            from detectors.type4.joern.joern_detector import JoernDetector
+            detector = JoernDetector(auto_start=True)
+            status   = detector.get_status()
+            if status.get("docker_available") and status.get("container_running"):
+                self._joern = detector
+                logger.info("✅ [Type4Detector] Joern container is running")
+                return detector
+            else:
+                logger.info(
+                    "[Type4Detector] Joern container not running "
+                    "(docker=%s running=%s) — PDG signal will be skipped",
+                    status.get("docker_available"),
+                    status.get("container_running"),
+                )
+                return None
+        except Exception as exc:
+            logger.info("[Type4Detector] Joern not available: %s", exc)
+            return None
+
+    # ─── public API ───────────────────────────────────────────────────────────
 
     def detect(
         self,
@@ -101,110 +158,71 @@ class Type4Detector:
         file_b: "str | Path",
         include_features: bool = False,
     ) -> Dict[str, Any]:
-        """Detect semantic similarity between two files."""
+        """
+        Detect Type-4 semantic similarity between two source files.
 
+        Args:
+            file_a:           Path to first source file.
+            file_b:           Path to second source file.
+            include_features: If True, attach diagnostic details to result.
+
+        Returns:
+            Detection result dict. Never raises.
+        """
         fa, fb = str(file_a), str(file_b)
+        logger.debug(
+            "[Type4Detector] detect(%s, %s) mode=%s",
+            Path(fa).name, Path(fb).name, self._mode,
+        )
 
-        if self._mode == "joern":
-            return self._detect_joern(fa, fb, include_features)
+        if self._mode == "educational":
+            return self._detect_educational(fa, fb, include_features)
         elif self._mode == "custom_pdg":
             return self._detect_custom(fa, fb, include_features)
         else:
             return self._unavailable_result()
 
     def prepare_batch(self, file_paths: List[Any]) -> None:
-        """No-op — kept for API compatibility with Type3 detector."""
+        """No-op — kept for API compatibility."""
         pass
 
     def clear_cache(self) -> None:
         """No-op — kept for API compatibility."""
         pass
 
-    # ─── Joern path ────────────────────────────────────────────────────
+    def get_mode(self) -> str:
+        """Return the active backend mode string."""
+        return self._mode
 
-    def _detect_joern(
-        self,
-        fa: str,
-        fb: str,
-        include_features: bool,
+    # ─── dispatch helpers ─────────────────────────────────────────────────────
+
+    def _detect_educational(
+        self, fa: str, fb: str, include_features: bool
     ) -> Dict[str, Any]:
         try:
-            result = self._joern.detect_from_files(fa, fb)
-
-            if result.status == "error":
-                logger.warning(f"[Type4/Joern] error: {result.error_message}")
-                return self._error_result(result.error_message)
-
-            scores = result.scores
-
-            # Map ConfidenceLevel enum → string used by analyzer
-            conf_map = {"high": "HIGH", "medium": "MEDIUM", "low": "LOW"}
-            confidence = conf_map.get(
-                result.confidence.value if result.confidence else "low",
-                "LOW"
-            )
-            if result.similarity < self.threshold * 0.7:
-                confidence = "UNLIKELY"
-
-            out = {
-                "semantic_score":    round(result.similarity, 4),
-                "is_semantic_clone": result.is_semantic_clone,
-                "confidence":        confidence,
-                "backend":           "joern",
-                "category_scores": {
-                    "control_flow": round(scores.control_flow_similarity, 4),
-                    "data_flow":    round(scores.data_flow_similarity,    4),
-                    "call_pattern": round(scores.node_type_similarity,    4),
-                    "structural":   round(scores.structural_similarity,   4),
-                    "behavioral":   round(
-                        (scores.control_flow_similarity + scores.data_flow_similarity) / 2,
-                        4
-                    ),
-                },
-            }
-
-            if include_features:
-                # Attach PDG info as proxy for features
-                out["features_a"] = {
-                    "behavioral_hash": f"pdg:{result.pdg1_info.num_nodes}n:{result.pdg1_info.num_edges}e",
-                    "num_nodes":       result.pdg1_info.num_nodes,
-                    "num_edges":       result.pdg1_info.num_edges,
-                    "methods":         result.pdg1_info.method_names,
-                }
-                out["features_b"] = {
-                    "behavioral_hash": f"pdg:{result.pdg2_info.num_nodes}n:{result.pdg2_info.num_edges}e",
-                    "num_nodes":       result.pdg2_info.num_nodes,
-                    "num_edges":       result.pdg2_info.num_edges,
-                    "methods":         result.pdg2_info.method_names,
-                }
-
-            return out
-
-        except Exception as e:
-            logger.error(f"[Type4/Joern] detect_from_files crashed: {e}")
+            result = self._edu.detect(fa, fb, include_features=include_features)
+            result["backend"] = "educational_type4"
+            return result
+        except Exception as exc:
+            logger.error("[Type4Detector] Educational detect() error: %s", exc)
             # Try custom_pdg as emergency fallback
             if self._custom:
+                logger.info("[Type4Detector] Emergency fallback to custom_pdg")
                 return self._detect_custom(fa, fb, include_features)
-            return self._error_result(str(e))
-
-    # ─── custom_pdg path ───────────────────────────────────────────────
+            return self._error_result(str(exc))
 
     def _detect_custom(
-        self,
-        fa: str,
-        fb: str,
-        include_features: bool,
+        self, fa: str, fb: str, include_features: bool
     ) -> Dict[str, Any]:
         try:
             raw = self._custom.detect(fa, fb, include_features=include_features)
-            # custom_pdg already returns the right dict format
             raw["backend"] = "custom_pdg"
             return raw
-        except Exception as e:
-            logger.error(f"[Type4/custom_pdg] crashed: {e}")
-            return self._error_result(str(e))
+        except Exception as exc:
+            logger.error("[Type4Detector] custom_pdg detect() error: %s", exc)
+            return self._error_result(str(exc))
 
-    # ─── helpers ───────────────────────────────────────────────────────
+    # ─── static result builders ───────────────────────────────────────────────
 
     @staticmethod
     def _unavailable_result() -> Dict[str, Any]:

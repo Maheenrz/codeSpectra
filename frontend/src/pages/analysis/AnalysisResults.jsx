@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import analysisService from '../../services/analysisService';
+import api from '../../utils/api';
 
 // DB stores similarity as 0-100. Normalise everywhere to 0-1.
 const norm   = (v) => v == null ? 0 : v > 1 ? v / 100 : v;
@@ -66,6 +67,11 @@ const PairCard = ({ pair, rank }) => {
   const t2 = norm(pair.type2_score      ?? meta.type2_score      ?? 0);
   const t3 = norm(pair.type3_score      ?? pair.structural_score ?? meta.structural_score ?? 0);
   const t4 = norm(pair.type4_score      ?? pair.semantic_score   ?? meta.semantic_score   ?? 0);
+
+  // Type-4 enrichment (from educational detector)
+  const ioMatchScore   = pair.io_match_score   ?? meta.io_match_score   ?? null;
+  const ioAvailable    = pair.io_available     ?? meta.io_available     ?? false;
+  const interpretation = pair.interpretation   ?? meta.interpretation   ?? '';
 
   const nameA = pair.student_a_name || meta.student_a_name || 'Student A';
   const nameB = pair.student_b_name || meta.student_b_name || 'Student B';
@@ -140,6 +146,32 @@ const PairCard = ({ pair, rank }) => {
             ))}
           </div>
 
+          {/* Type-4 I/O behavioral detail */}
+          {t4 > 0 && (
+            <div className="bg-white border border-gray-100 rounded-xl px-4 py-3 mb-3">
+              <p className="text-[9px] font-black uppercase tracking-widest text-[#8B9BB4] mb-2">Type-4 — Educational Semantic Analysis</p>
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-semibold text-gray-500">I/O Match:</span>
+                  {ioAvailable && ioMatchScore !== null ? (
+                    <span className={`text-xs font-black ${
+                      ioMatchScore >= 0.9 ? 'text-[#CF7249]'
+                      : ioMatchScore >= 0.7 ? 'text-[#C4827A]'
+                      : 'text-[#8B9BB4]'
+                    }`}>{Math.round(ioMatchScore * 100)}%</span>
+                  ) : (
+                    <span className="text-[10px] text-gray-400 italic">unavailable</span>
+                  )}
+                </div>
+                {interpretation && (
+                  <span className="text-[10px] text-gray-500 flex-1 min-w-0 truncate" title={interpretation}>
+                    {interpretation}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Files */}
           {(fileA || fileB) && (
             <div className="grid grid-cols-2 gap-3">
@@ -195,9 +227,104 @@ const AnalysisResults = () => {
   const [loading,   setLoading]   = useState(true);
   const [filter,    setFilter]    = useState('all');
   const [sort,      setSort]      = useState('score');
-  const [running,   setRunning]   = useState(false);
+  const [running,    setRunning]    = useState(false);
+  const [csvLoading,  setCsvLoading]  = useState(false);
   // Ref to prevent rapid re-clicks
   const runningRef = useRef(false);
+
+  const downloadCsv = (mode = 'summary') => {
+    if (csvLoading) return;
+    setCsvLoading(true);
+    try {
+      const pairs = results?.highSimilarityPairs || [];
+      if (!pairs.length) { alert('No results to export yet. Run analysis first.'); return; }
+
+      // ── Summary mode: 8 human-readable columns ──────────────────────────
+      if (mode === 'summary') {
+        const RECS = {
+          CRITICAL:'Exact duplicate or renamed — flag immediately.',
+          HIGH:    'Strong structural similarity — schedule review.',
+          MEDIUM:  'Moderate similarity — add to review queue.',
+          LOW:     'Low similarity — monitor.',
+          NONE:    'No action required.',
+        };
+        const CLONE_LABEL = {
+          type1: 'Type 1 — Exact Copy', type2: 'Type 2 — Renamed Variables',
+          type3: 'Type 3 — Structural Clone', none: 'No Clone',
+        };
+        const header = ['Student File 1','Student File 2','Plagiarism Match (%)','Clone Type','Risk Level','Student A','Student B','Recommendation'];
+        const rows   = [...pairs]
+          .sort((a, b) => norm(b.similarity ?? 0) - norm(a.similarity ?? 0))
+          .map(p => {
+            const s    = norm(p.similarity ?? 0);
+            const risk = s >= 0.85 ? 'CRITICAL' : s >= 0.70 ? 'HIGH' : s >= 0.50 ? 'MEDIUM' : s >= 0.30 ? 'LOW' : 'NONE';
+            const mb   = (() => { try { return typeof p.matching_blocks === 'string' ? JSON.parse(p.matching_blocks) : (p.matching_blocks || {}); } catch { return {}; } })();
+            return [
+              mb.file_a ? mb.file_a.split('/').pop() : '',
+              mb.file_b ? mb.file_b.split('/').pop() : '',
+              `${Math.round(s * 100)}%`,
+              CLONE_LABEL[p.clone_type || mb.primary_clone_type] || (p.clone_type || ''),
+              risk,
+              p.student_a_name || '',
+              p.student_b_name || '',
+              RECS[risk] || '',
+            ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
+          });
+        const csv  = [header.join(','), ...rows].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = `codespectra_summary_${assignmentId}_${Date.now()}.csv`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        return;
+      }
+
+      // ── Technical mode: all available scores ─────────────────────────────
+      const header = [
+        'rank','student_a','student_b','clone_type','similarity_pct',
+        'type1_pct','type2_pct','type3_pct','confidence','risk_level',
+        'file_a','file_b','needs_review','recommendation',
+      ];
+      const RECS = { CRITICAL:'Flag immediately.', HIGH:'Schedule review.', MEDIUM:'Add to queue.', LOW:'Monitor.', NONE:'No action.' };
+      const rows = [...pairs]
+        .sort((a, b) => norm(b.similarity ?? 0) - norm(a.similarity ?? 0))
+        .map((p, i) => {
+          const s    = norm(p.similarity ?? 0);
+          const risk = s >= 0.85 ? 'CRITICAL' : s >= 0.70 ? 'HIGH' : s >= 0.50 ? 'MEDIUM' : s >= 0.30 ? 'LOW' : 'NONE';
+          const mb   = (() => { try { return typeof p.matching_blocks === 'string' ? JSON.parse(p.matching_blocks) : (p.matching_blocks || {}); } catch { return {}; } })();
+          return [
+            i + 1,
+            p.student_a_name || '',
+            p.student_b_name || '',
+            p.clone_type || mb.primary_clone_type || '',
+            Math.round(s * 100),
+            Math.round(norm(p.type1_score ?? mb.type1_score ?? 0) * 100),
+            Math.round(norm(p.type2_score ?? mb.type2_score ?? 0) * 100),
+            Math.round(norm(p.type3_score ?? p.structural_score ?? mb.structural_score ?? 0) * 100),
+            mb.confidence || '',
+            risk,
+            mb.file_a ? mb.file_a.split('/').pop() : '',
+            mb.file_b ? mb.file_b.split('/').pop() : '',
+            (p.needs_review || s >= 0.70) ? 'YES' : 'NO',
+            RECS[risk] || '',
+          ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
+        });
+      const csv  = [header.join(','), ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `codespectra_technical_${assignmentId}_${Date.now()}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('CSV export failed:', err);
+    } finally {
+      setCsvLoading(false);
+    }
+  };
 
   useEffect(() => { fetchResults(); }, [assignmentId, threshold]);
 
@@ -211,7 +338,7 @@ const AnalysisResults = () => {
   };
 
   // ── DEBOUNCED trigger — ignores clicks while already running ─────────────
-  const lysis = useCallback(async () => {
+  const triggerAnalysis = useCallback(async () => {
     if (runningRef.current) {
       console.log('[UI] Analysis already running — ignoring click');
       return;
@@ -239,6 +366,8 @@ const AnalysisResults = () => {
     }
   }, [assignmentId, threshold]);
 
+  // Read assignment detection settings from results if available
+  const assignmentSettings = results?.assignment_settings || null;
   const rawPairs = results?.highSimilarityPairs || [];
 
   const filtered = rawPairs.filter(p => {
@@ -277,12 +406,38 @@ const AnalysisResults = () => {
             <span className="text-gray-200">|</span>
             <p className="text-xs font-black uppercase tracking-widest text-gray-400">Plagiarism Report</p>
           </div>
-          <button onClick={triggerAnalysis} disabled={running}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex-shrink-0">
-            {running
-              ? <><span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Analyzing…</>
-              : '▶ Re-run Analysis'}
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Export CSV — Summary / Technical split button */}
+            {results?.highSimilarityPairs?.length > 0 && (
+              <div className="flex items-stretch rounded-xl overflow-hidden border border-[#B8D9D9]">
+                <button
+                  onClick={() => downloadCsv('summary')}
+                  disabled={csvLoading}
+                  title="8-column human-readable report"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#2D6A6A] text-xs font-bold hover:bg-[#EBF4F4] disabled:opacity-50 transition-all border-r border-[#B8D9D9]"
+                >
+                  {csvLoading
+                    ? <span className="w-3 h-3 border-2 border-[#B8D9D9] border-t-[#2D6A6A] rounded-full animate-spin" />
+                    : <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>}
+                  Summary
+                </button>
+                <button
+                  onClick={() => downloadCsv('technical')}
+                  disabled={csvLoading}
+                  title="Full technical report with all scores"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#2D6A6A] text-xs font-bold hover:bg-[#EBF4F4] disabled:opacity-50 transition-all"
+                >
+                  Technical
+                </button>
+              </div>
+            )}
+            <button onClick={triggerAnalysis} disabled={running}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#1A1714] text-white text-xs font-bold hover:bg-[#2D2825] disabled:opacity-50 disabled:cursor-not-allowed transition-all">
+              {running
+                ? <><span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Analyzing…</>
+                : '▶ Re-run Analysis'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -302,6 +457,27 @@ const AnalysisResults = () => {
             accent={highCount > 0 ? 'text-amber-600' : 'text-gray-400'} />
           <Stat label="Avg similarity" value={`${Math.round(avgScore * 100)}%`} />
         </div>
+
+        {/* Detection type settings banner */}
+        {assignmentSettings && (
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3 rounded-xl bg-[#F7F3EE] border border-[#E8E1D8]">
+            <span className="text-xs font-bold text-[#6B6560]">Active detectors:</span>
+            {[
+              { key: 'type1', label: 'Type-1 Exact',    color: '#CF7249', bg: '#FEF3EC' },
+              { key: 'type2', label: 'Type-2 Renamed',  color: '#2D6A6A', bg: '#EBF4F4' },
+              { key: 'type3', label: 'Type-3 Near-Miss', color: '#C4827A', bg: '#FAEDEC' },
+              { key: 'type4', label: 'Type-4 Semantic/I⁠O', color: '#8B9BB4', bg: '#EFF2F7' },
+            ].map(({ key, label, color, bg }) => (
+              <span key={key} style={{
+                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                background: assignmentSettings[key] ? bg : '#F0EBE3',
+                color: assignmentSettings[key] ? color : '#A8A29E',
+                textDecoration: assignmentSettings[key] ? 'none' : 'line-through',
+                opacity: assignmentSettings[key] ? 1 : 0.6,
+              }}>{label}</span>
+            ))}
+          </div>
+        )}
 
         {criticalCount > 0 && (
           <div className="flex items-center gap-3 px-5 py-4 rounded-xl bg-red-50 border border-red-200">

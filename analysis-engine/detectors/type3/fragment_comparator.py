@@ -1,159 +1,175 @@
 # detectors/type3/fragment_comparator.py
 """
-Fragment Comparator — Dual-Similarity Clone Type Discrimination
-================================================================
+Fragment Comparator — Multi-Tier Clone Type Discrimination
+===========================================================
 
-This is the CORE of the corrected Type-3 detection logic.
+Improvement over previous version:
+  - Added MT3 tier (50–70% normalized similarity) per BigCloneBench taxonomy
+  - Added clone_band field (VST3 / ST3 / MT3) aligned with Walker et al. 2019
+  - Added confidence penalty for MT3 to reduce false positives
+  - Added gap_ratio diagnostic (norm_sim - raw_sim)
 
-The Problem (old approach):
-  The old code normalized all identifiers (Node→VAR_0, Element→VAR_0)
-  and then ran LCS on the normalized tokens. This meant that a Type-2
-  clone (same code, just renamed variables) would score ~100% and get
-  reported as a "Type-3 structural clone" — which is WRONG.
+Clone bands (BigCloneBench taxonomy, Walker et al. 2019):
+  VST3: 90–100% normalized similarity (very strongly similar)
+  ST3:  70–90%  normalized similarity (strongly similar)
+  MT3:  50–70%  normalized similarity (moderately similar)  ← NEW
+  WT3:  0–50%   (weakly similar — not detected; too noisy for edu context)
 
-The Fix (dual-similarity):
-  We compute TWO similarity scores for every fragment pair:
-
-  1. raw_similarity   = LCS(original_tokens_A, original_tokens_B)
-     → measures how similar the code is AS WRITTEN (with real names)
-
-  2. norm_similarity  = LCS(normalized_tokens_A, normalized_tokens_B)
-     → measures how similar the code STRUCTURE is (ignoring names)
-
-  Then we use the GAP between them to classify:
-
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  raw ≥ 0.95                                                     │
-  │    → Type-1: exact copy (identical tokens)                      │
-  │    → NOT our job — belongs to the Type-1 detector               │
-  │                                                                  │
-  │  norm ≥ 0.95  AND  raw < 0.95                                   │
-  │    → Type-2: only variable/function names were changed           │
-  │    → NOT our job — belongs to the Type-2 detector               │
-  │                                                                  │
-  │  0.70 ≤ norm < 0.95                                              │
-  │    → Type-3: real structural modification beyond just renaming   │
-  │    → THIS is what we detect and report ✅                        │
-  │                                                                  │
-  │  norm < 0.70                                                     │
-  │    → Not a structural clone (may still be Type-4 semantic)       │
-  │    → NOT our job — belongs to the Type-4 detector               │
-  └──────────────────────────────────────────────────────────────────┘
+Three-level classification cascade:
+  raw ≥ 0.95                          → type1 (exact copy)
+  norm ≥ 0.95  AND raw < 0.95         → type2 (renamed identifiers)
+  norm ≥ 0.70  AND norm < 0.95        → type3 ST3/VST3 (high confidence)
+  norm ≥ 0.50  AND norm < 0.70        → type3 MT3 (medium confidence)
+                 AND gap_ratio ≥ 0.08  (ensures renaming or structural change
+                                        caused the similarity gap, not just
+                                        unrelated similar-length code)
+  else                                → none
 
 Research basis:
-  - Roy & Cordy (2008) define Type-3 as "near-miss clones with
-    statement-level modifications" — NOT just renamed variables.
-  - The dual-similarity approach is inspired by how tools like
-    CCFinder and SourcererCC separate Type-2 from Type-3.
+  Roy & Cordy (2008) — NiCad near-miss clone detection via LCS on normalized tokens
+  Walker et al. (2019) — BigCloneBench taxonomy and recall analysis
+  Ain et al. (2019) — Systematic review, hybrid approaches outperform single-technique
 """
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Tuple
 
 from detectors.type3.fragment_extractor import Fragment
-from detectors.type3.normalizer import normalize_tokens
+from detectors.type3.normalizer import normalize_tokens, structurally_normalize_tokens
 from detectors.type3.lcs_comparator import lcs_similarity
 
 
-# ── Thresholds for clone type classification ──────────────────────────────────
+# ─── Thresholds ───────────────────────────────────────────────────────────────
 
-# If raw similarity is at or above this, it's an exact copy (Type-1)
-TYPE1_RAW_THRESHOLD = 0.95
+TYPE1_RAW_THRESHOLD  = 0.95   # raw ≥ this → exact copy (Type-1)
+TYPE2_NORM_THRESHOLD = 0.95   # norm ≥ this → renamed identifiers (Type-2)
+TYPE3_ST_THRESHOLD   = 0.70   # norm ≥ this → ST3 / VST3 (Type-3, high confidence)
+TYPE3_MT_THRESHOLD   = 0.50   # norm ≥ this → MT3 (Type-3, medium confidence)
+MT3_GAP_MIN          = 0.08   # minimum gap_ratio required to confirm MT3
+                               # (filters out unrelated code that happens to
+                               #  score 50–70% due to similar structure patterns)
 
-# If normalized similarity is at or above this, the fragments are
-# structurally identical (any difference is just renaming → Type-2)
-TYPE2_NORM_THRESHOLD = 0.95
-
-# If normalized similarity is at or above this, there is significant
-# structural overlap — this is a true Type-3 clone
-TYPE3_NORM_THRESHOLD = 0.70
+# Confidence penalty for MT3: the score is discounted to reflect lower certainty
+MT3_SCORE_PENALTY    = 0.85
 
 
 @dataclass
 class FragmentComparisonResult:
     """
-    Result of comparing two code fragments with dual-similarity.
+    Result of comparing two code fragments using the multi-tier approach.
 
-    Attributes:
-        raw_similarity:   LCS score on original (un-normalized) tokens
-        norm_similarity:  LCS score on normalized tokens (identifiers → VAR_N)
-        clone_type:       "type1", "type2", "type3", or "none"
-        is_type3:         True only if this is a genuine Type-3 clone
-        type3_score:      The score to report for Type-3 (norm_similarity
-                          if type3, else 0.0)
+    Fields:
+        raw_similarity:   LCS on original tokens (Type-1 check)
+        norm_similarity:  LCS on blind-normalized tokens (Type-2/3 check)
+        deep_similarity:  LCS on structurally-normalized tokens (MT3 confirmation)
+        gap_ratio:        norm_similarity - raw_similarity (diagnostic)
+        clone_type:       "type1" | "type2" | "type3" | "none"
+        clone_band:       "VST3" | "ST3" | "MT3" | "type1" | "type2" | "none"
+                          VST3 = 90–100% norm sim (very strongly similar Type-3)
+                          ST3  = 70–90%  norm sim (strongly similar Type-3)
+                          MT3  = 50–70%  norm sim (moderately similar Type-3)
+        is_type3:         True only if a genuine Type-3 clone
+        type3_score:      The score to report (norm_sim with MT3 penalty if applicable)
+        confidence:       "HIGH" | "MEDIUM" | "LOW"
     """
     raw_similarity:  float
     norm_similarity: float
-    clone_type:      str     # "type1" | "type2" | "type3" | "none"
+    deep_similarity: float
+    gap_ratio:       float
+    clone_type:      str
+    clone_band:      str
     is_type3:        bool
-    type3_score:     float   # 0.0 if not type3, else norm_similarity
+    type3_score:     float
+    confidence:      str
 
 
 def compare_fragments(frag_a: Fragment, frag_b: Fragment) -> FragmentComparisonResult:
     """
-    Compare two fragments using dual-similarity to determine clone type.
+    Compare two code fragments using the multi-tier dual-similarity approach.
 
-    This is the fundamental operation that fixes the misclassification bug.
-    By comparing raw vs normalized similarity, we can tell whether the
-    code was just renamed (Type-2) or actually structurally modified (Type-3).
+    Computes three similarity levels:
+      1. raw_sim   — original tokens (detects Type-1: exact copies)
+      2. norm_sim  — blind-normalized tokens (detects Type-2: renames, Type-3: structural)
+      3. deep_sim  — structurally-normalized (used for MT3 confirmation)
     """
-    raw_tokens_a = frag_a.tokens
-    raw_tokens_b = frag_b.tokens
-
+    raw_tokens_a  = frag_a.tokens
+    raw_tokens_b  = frag_b.tokens
     norm_tokens_a = normalize_tokens(raw_tokens_a)
     norm_tokens_b = normalize_tokens(raw_tokens_b)
+    deep_tokens_a = structurally_normalize_tokens(norm_tokens_a)
+    deep_tokens_b = structurally_normalize_tokens(norm_tokens_b)
 
-    # Step 1: Compute both similarity scores
-    raw_sim  = lcs_similarity(raw_tokens_a, raw_tokens_b)
-    norm_sim = lcs_similarity(norm_tokens_a, norm_tokens_b)
+    raw_sim   = lcs_similarity(raw_tokens_a,  raw_tokens_b)
+    norm_sim  = lcs_similarity(norm_tokens_a, norm_tokens_b)
+    deep_sim  = lcs_similarity(deep_tokens_a, deep_tokens_b)
+    gap_ratio = round(norm_sim - raw_sim, 4)
 
-    # Step 2: Classify based on the dual scores
-    clone_type, is_type3, type3_score = _classify(raw_sim, norm_sim)
+    clone_type, clone_band, is_type3, type3_score, confidence = _classify(
+        raw_sim, norm_sim, deep_sim, gap_ratio
+    )
 
     return FragmentComparisonResult(
         raw_similarity  = raw_sim,
         norm_similarity = norm_sim,
+        deep_similarity = deep_sim,
+        gap_ratio       = gap_ratio,
         clone_type      = clone_type,
+        clone_band      = clone_band,
         is_type3        = is_type3,
         type3_score     = type3_score,
+        confidence      = confidence,
     )
 
 
 def _classify(
-    raw_sim: float,
-    norm_sim: float,
-) -> tuple:
+    raw_sim:   float,
+    norm_sim:  float,
+    deep_sim:  float,
+    gap_ratio: float,
+) -> Tuple[str, str, bool, float, str]:
     """
-    Classify a fragment pair based on raw and normalized similarity.
+    Classify a fragment pair.
+    Returns: (clone_type, clone_band, is_type3, type3_score, confidence)
+    """
 
-    Returns: (clone_type, is_type3, type3_score)
-    """
-    # Case 1: Exact copy — raw tokens are nearly identical
-    # This is Type-1, not our responsibility
+    # ── Type-1: exact copy (raw tokens nearly identical) ──────────────────
     if raw_sim >= TYPE1_RAW_THRESHOLD:
-        return ("type1", False, 0.0)
+        return ("type1", "type1", False, 0.0, "HIGH")
 
-    # Case 2: After normalization the fragments are nearly identical,
-    # but raw tokens differ — the only changes were variable/function names.
-    # This is Type-2 (renamed variables), not Type-3.
+    # ── Type-2: renamed identifiers (norm identical but raw differs) ───────
     if norm_sim >= TYPE2_NORM_THRESHOLD:
-        return ("type2", False, 0.0)
+        return ("type2", "type2", False, 0.0, "HIGH")
 
-    # Case 3: Normalized similarity is high but not perfect —
-    # there are real structural changes (added/removed/modified statements).
-    # THIS is a genuine Type-3 clone.
-    if norm_sim >= TYPE3_NORM_THRESHOLD:
-        return ("type3", True, round(norm_sim, 4))
+    # ── Type-3 ST3/VST3: strongly similar structural clone ─────────────────
+    # norm ≥ 0.70: real structural modifications beyond renaming.
+    # Band is VST3 if norm ≥ 0.90, else ST3.
+    if norm_sim >= TYPE3_ST_THRESHOLD:
+        band       = "VST3" if norm_sim >= 0.90 else "ST3"
+        score      = round(norm_sim, 4)
+        confidence = "HIGH" if norm_sim >= 0.80 else "MEDIUM"
+        return ("type3", band, True, score, confidence)
 
-    # Case 4: Not enough structural similarity for Type-3.
-    # Could still be a Type-4 semantic clone, but that's not our job.
-    return ("none", False, 0.0)
+    # ── Type-3 MT3: moderately similar structural clone ────────────────────
+    # norm 0.50–0.70: weaker structural overlap.
+    # Requires gap_ratio >= MT3_GAP_MIN to confirm it's not just two
+    # unrelated files that happen to use similar control-flow patterns.
+    # Also uses deep_sim (structural normalization) as a confirmation signal:
+    # if deep_sim is high, the structural skeleton is truly similar.
+    if norm_sim >= TYPE3_MT_THRESHOLD:
+        # Confirm: either the gap_ratio suggests renaming happened,
+        # or the deep structural similarity is high (same skeleton)
+        gap_confirms  = gap_ratio >= MT3_GAP_MIN
+        deep_confirms = deep_sim >= 0.65
+
+        if gap_confirms or deep_confirms:
+            # Apply score penalty to reflect lower certainty
+            score = round(norm_sim * MT3_SCORE_PENALTY, 4)
+            return ("type3", "MT3", True, score, "LOW")
+
+    return ("none", "none", False, 0.0, "UNLIKELY")
 
 
 def compare_fragments_raw_only(frag_a: Fragment, frag_b: Fragment) -> float:
-    """
-    Quick raw-only comparison (no normalization).
-    Used when you just need to know if fragments are textually similar.
-    """
+    """Quick raw-only comparison (no normalization)."""
     return lcs_similarity(frag_a.tokens, frag_b.tokens)

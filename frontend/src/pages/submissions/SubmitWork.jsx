@@ -298,18 +298,18 @@ const SubmitWork = () => {
     <div className="min-h-screen bg-gray-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&display=swap');`}</style>
 
-      {/* Top bar */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
+      {/* Title bar — sits under global navbar */}
+      <div className="bg-white border-b border-gray-200 sticky top-16 z-40">
+        <div className="max-w-2xl mx-auto px-6 py-3 flex items-center justify-between">
           <Link to={`/assignments/${assignmentId}`}
-            className="flex items-center gap-2 text-xs font-semibold text-gray-500 hover:text-gray-800">
+            className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-800">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
-            Assignment
+            Back to Assignment
           </Link>
           <p className="text-xs font-black uppercase tracking-widest text-gray-400">Submit Work</p>
-          <div className="w-16" />
+          <div className="w-28" />
         </div>
       </div>
 

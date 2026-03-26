@@ -9,7 +9,7 @@ const axios = require("axios");
 const pool  = require("../config/database");
 const path  = require("path");
 
-const ENGINE            = process.env.ANALYSIS_ENGINE_URL || "http://localhost:8000";
+const ENGINE            = process.env.ANALYSIS_ENGINE_URL || "http://localhost:5000";
 const POLL_INTERVAL_MS  = 3000;
 const MAX_POLL_ATTEMPTS = 100;
 
@@ -46,6 +46,15 @@ class AnalysisService {
     );
     if (!assignment) throw new Error(`Assignment ${assignmentId} not found`);
 
+    // ── Read which detection types are enabled for this assignment ────────
+    const enabledTypes = {
+      type1: assignment.enable_type1 !== false,
+      type2: assignment.enable_type2 !== false,
+      type3: assignment.enable_type3 !== false,
+      type4: assignment.enable_type4 !== false,
+    };
+    console.log(`[Analysis] Enabled detection types:`, enabledTypes);
+
     const { rows } = await pool.query(`
       SELECT
         s.submission_id,
@@ -80,13 +89,26 @@ class AnalysisService {
       [valid.map(r => r.submission_id)]
     );
 
+    // Path translation:
+    // ANALYSIS_ENGINE_UPLOADS_BASE tells us what path the engine container
+    // uses for uploads. Set this whenever the engine runs in Docker.
+    //
+    // Scenarios:
+    //   Full Docker (./start.sh up):   ANALYSIS_ENGINE_UPLOADS_BASE=/app/uploads  → translates
+    //   Backend local + engine Docker: ANALYSIS_ENGINE_UPLOADS_BASE=/app/uploads  → translates
+    //   Everything local (no Docker):  not set                                     → real path used
     const uploadsBase = path.join(__dirname, "../../uploads");
+    const engineUploadsBase = process.env.ANALYSIS_ENGINE_UPLOADS_BASE;
     const toEngine = (hostPath) => {
-      const rel = hostPath
-        .replace(uploadsBase + path.sep, "")
-        .replace(uploadsBase + "/", "")
-        .replace(/\\/g, "/");
-      return `/app/uploads/${rel}`;
+      if (engineUploadsBase) {
+        const rel = hostPath
+          .replace(uploadsBase + path.sep, "")
+          .replace(uploadsBase + "/", "")
+          .replace(/\\/g, "/");
+        return `${engineUploadsBase}/${rel}`;
+      }
+      // Local dev: engine on same filesystem — use real path as-is
+      return hostPath;
     };
 
     const submissions = valid.map(r => ({
@@ -116,8 +138,22 @@ class AnalysisService {
     const subMap = {};
     valid.forEach(r => { subMap[r.submission_id] = r; });
 
-    const clonePairs = results.clone_pairs || results.results || [];
-    console.log(`[Analysis] Engine returned ${clonePairs.length} pairs`);
+    const rawPairs = results.clone_pairs || results.results || [];
+    console.log(`[Analysis] Engine returned ${rawPairs.length} pairs`);
+
+    // ── Filter by enabled detection types ─────────────────────────────────
+    // Only keep pairs whose primary_clone_type matches a type the instructor
+    // enabled for this assignment. Pairs classified as 'none' are also dropped.
+    const clonePairs = rawPairs.filter(pair => {
+      const ct = pair.primary_clone_type || 'none';
+      if (ct === 'type1' && !enabledTypes.type1) return false;
+      if (ct === 'type2' && !enabledTypes.type2) return false;
+      if (ct === 'type3' && !enabledTypes.type3) return false;
+      if (ct === 'type4' && !enabledTypes.type4) return false;
+      if (ct === 'none') return false; // no detected clone, skip
+      return true;
+    });
+    console.log(`[Analysis] After type-filter: ${clonePairs.length}/${rawPairs.length} pairs kept (types: ${JSON.stringify(enabledTypes)})`);
 
     // ── WIPE OLD RESULTS before saving fresh ones (prevents duplicates) ─
     await pool.query(`
@@ -174,15 +210,23 @@ class AnalysisService {
 
       const [loId, hiId] = subAId < subBId ? [subAId, subBId] : [subBId, subAId];
 
-      // ── FIX #1: combined_score calculation ──────────────────────────────
-      // Engine scores are 0.0-1.0 floats
+      // ── v2.3 score priority ──────────────────────────────────────────────
       const t1 = pair.type1_score      ?? 0;
       const t2 = pair.type2_score      ?? 0;
       const t3 = pair.structural_score ?? 0;
       const t4 = pair.semantic_score   ?? 0;
 
-      // Use engine's combined_score if available; otherwise compute properly
-      const score = pair.combined_score ?? Math.max(t1, t2, t3, t4);
+      // effective_score from engine v2.3 takes highest priority
+      let score;
+      if (pair.effective_score != null && pair.effective_score > 0) {
+        score = pair.effective_score;
+      } else if (t1 >= 0.95) {
+        score = t1;
+      } else if (t2 >= 0.65) {
+        score = t2;
+      } else {
+        score = pair.combined_score ?? t3 ?? 0;
+      }
       const similarityPct = parseFloat((score * 100).toFixed(2));
 
       // ── FIX #2: Use priority-cascade clone type ─────────────────────────

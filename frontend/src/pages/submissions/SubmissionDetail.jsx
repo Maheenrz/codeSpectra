@@ -1,210 +1,222 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import submissionService from '../../services/submissionService';
 import analysisService from '../../services/analysisService';
-import LoadingSpinner from '../../components/common/LoadingSpinner';
-import Card from '../../components/common/Card';
+
+const norm = (v) => v == null ? 0 : v > 1 ? v / 100 : v;
+const pct  = (v) => `${Math.round(norm(v) * 100)}%`;
+const EXT_LANG  = { '.cpp':'C++','.c':'C','.h':'C/C++','.hpp':'C++','.java':'Java','.py':'Python','.js':'JavaScript','.jsx':'JavaScript','.ts':'TypeScript','.tsx':'TypeScript' };
+const LANG_CLR  = { 'C++':'bg-blue-100 text-blue-700','C':'bg-sky-100 text-sky-700','Java':'bg-orange-100 text-orange-700','Python':'bg-yellow-100 text-yellow-700','JavaScript':'bg-amber-100 text-amber-700','TypeScript':'bg-indigo-100 text-indigo-700' };
+const getExt    = n => '.' + n.split('.').pop().toLowerCase();
+const fmtSize   = b => b > 1048576 ? `${(b/1048576).toFixed(1)} MB` : `${(b/1024).toFixed(1)} KB`;
+const STATUS_ST = {
+  completed:  { badge:'bg-emerald-50 text-emerald-700', dot:'bg-emerald-500',             label:'Done'      },
+  processing: { badge:'bg-blue-50 text-blue-700',       dot:'bg-blue-500 animate-pulse',  label:'Analyzing' },
+  failed:     { badge:'bg-red-50 text-red-600',         dot:'bg-red-500',                 label:'Failed'    },
+  pending:    { badge:'bg-[#F7F3EE] text-[#6B6560]',   dot:'bg-[#A8A29E]',              label:'Pending'   },
+};
+
+function ScoreBar({ label, value, color }) {
+  return (
+    <div>
+      <div className="flex justify-between text-xs mb-1.5">
+        <span className="text-[#6B6560]">{label}</span>
+        <span className="font-bold text-[#1A1714]">{pct(value)}</span>
+      </div>
+      <div className="h-2 bg-[#F0EBE3] rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: pct(value) }} />
+      </div>
+    </div>
+  );
+}
 
 const SubmissionDetail = () => {
   const { submissionId } = useParams();
   const { isInstructor } = useAuth();
   const [submission, setSubmission] = useState(null);
-  const [analysisResults, setAnalysisResults] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [analysis,   setAnalysis]   = useState(null);
+  const [loading,    setLoading]    = useState(true);
+  const pollRef = useRef(null);
 
-  useEffect(() => {
-    fetchSubmissionData();
-  }, [submissionId]);
-
-  const fetchSubmissionData = async () => {
+  const fetchAll = async () => {
     try {
-      const submissionData = await submissionService.getSubmissionById(submissionId);
-      setSubmission(submissionData);
-
-      if (submissionData.analysis_status === 'completed') {
-        try {
-          const resultsData = await analysisService.getSubmissionResults(submissionId);
-          setAnalysisResults(resultsData);
-        } catch (err) {
-          console.log('No analysis results yet');
-        }
+      const sub = await submissionService.getSubmissionById(submissionId);
+      setSubmission(sub);
+      if (sub.analysis_status === 'completed') {
+        try { const res = await analysisService.getSubmissionResults(submissionId); setAnalysis(res); } catch (_) {}
       }
-    } catch (error) {
-      console.error('Error fetching submission:', error);
-    } finally {
-      setLoading(false);
-    }
+      return sub.analysis_status;
+    } catch (e) { console.error(e); return null; }
+    finally { setLoading(false); }
   };
 
-  if (loading) return <LoadingSpinner message="Loading submission..." />;
-  if (!submission) return <div>Submission not found</div>;
+  useEffect(() => {
+    fetchAll().then(status => {
+      if (status === 'processing' || status === 'pending') {
+        pollRef.current = setInterval(async () => {
+          const s = await fetchAll();
+          if (s === 'completed' || s === 'failed' || !s) { clearInterval(pollRef.current); pollRef.current = null; }
+        }, 5000);
+      }
+    });
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [submissionId]);
+
+  if (loading) return (
+    <div className="min-h-screen bg-[#F7F3EE] flex items-center justify-center">
+      <div className="w-8 h-8 border-2 border-[#CF7249] border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+  if (!submission) return (
+    <div className="min-h-screen bg-[#F7F3EE] flex items-center justify-center">
+      <p className="text-[#6B6560]">Submission not found.</p>
+    </div>
+  );
+
+  const status     = submission.analysis_status || 'pending';
+  const S          = STATUS_ST[status] || STATUS_ST.pending;
+  const overallPct = analysis ? Math.round(norm(analysis.overall_similarity) * 100) : 0;
+  const riskClr    = overallPct >= 85 ? 'text-[#C4827A]' : overallPct >= 70 ? 'text-[#CF7249]' : 'text-[#2D6A6A]';
+  const barClr     = overallPct >= 85 ? 'bg-[#C4827A]'   : overallPct >= 70 ? 'bg-[#CF7249]'   : 'bg-[#2D6A6A]';
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <Link 
-            to={`/assignments/${submission.assignment_id}`}
-            className="text-purple-600 hover:text-purple-700 mb-4 inline-block"
-          >
-            ← Back to Assignment
+    <div className="min-h-screen bg-[#F7F3EE]">
+      <div className="bg-white border-b border-[#E8E1D8] sticky top-16 z-40 pt-0">
+        <div className="max-w-5xl mx-auto px-6 py-5">
+          <Link to={`/assignments/${submission.assignment_id}`}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#A8A29E] hover:text-[#1A1714] mb-4 transition-colors">
+            ← {submission.assignment_title}
           </Link>
-          <h1 className="text-3xl font-bold text-gray-900">{submission.assignment_title}</h1>
-          <p className="text-gray-600 mt-1">
-            Submitted by {submission.student_name} on {new Date(submission.submitted_at).toLocaleString()}
-          </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-xl font-bold text-[#1A1714]">Submission Details</h1>
+              <p className="text-xs text-[#A8A29E] mt-1">{submission.student_name} · {submission.course_code} · {new Date(submission.submitted_at).toLocaleString()}</p>
+            </div>
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold ${S.badge}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${S.dot}`} />{S.label}
+            </span>
+          </div>
+          {status === 'processing' && (
+            <div className="mt-4 flex items-center gap-3 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200">
+              <span className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+              <p className="text-sm text-blue-800 font-medium">Analysis is running — page will update automatically.</p>
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid lg:grid-cols-3 gap-8">
-          {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
+      <div className="max-w-5xl mx-auto px-6 py-8">
+        <div className="grid lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-5">
+
             {/* Files */}
-            <Card>
-              <h2 className="text-xl font-bold text-gray-900 mb-4">
-                Submitted Files ({submission.files?.length || 0})
-              </h2>
-              <div className="space-y-2">
-                {submission.files?.map((file, index) => (
-                  <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <svg className="w-6 h-6 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                      </svg>
-                      <div>
-                        <p className="font-medium text-gray-900">{file.filename}</p>
-                        <p className="text-sm text-gray-600">{(file.file_size / 1024).toFixed(2)} KB</p>
-                      </div>
-                    </div>
-                    <a 
-                      href={`http://localhost:3000${file.file_path}`}
-                      download
-                      className="text-purple-600 hover:text-purple-700 font-semibold"
-                    >
-                      Download
-                    </a>
-                  </div>
-                ))}
+            <div className="bg-white rounded-2xl border border-[#E8E1D8] overflow-hidden">
+              <div className="px-6 py-4 border-b border-[#F0EBE3]">
+                <h2 className="text-sm font-bold text-[#1A1714]">Submitted Files ({submission.files?.length || 0})</h2>
               </div>
-            </Card>
-
-            {/* Analysis Results */}
-            {analysisResults && (
-              <Card>
-                <h2 className="text-xl font-bold text-gray-900 mb-4">Analysis Results</h2>
-                
-                <div className="mb-6">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-700 font-medium">Overall Similarity</span>
-                    <span className="text-3xl font-bold text-purple-600">
-                      {analysisResults.overall_similarity?.toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-4">
-                    <div 
-                      className={`h-4 rounded-full ${
-                        analysisResults.overall_similarity >= 85 ? 'bg-red-600' :
-                        analysisResults.overall_similarity >= 70 ? 'bg-orange-600' :
-                        'bg-green-600'
-                      }`}
-                      style={{ width: `${analysisResults.overall_similarity}%` }}
-                    ></div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="text-center p-4 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-gray-600 mb-1">Type-1</p>
-                    <p className="text-2xl font-bold text-purple-600">
-                      {analysisResults.type1_score?.toFixed(1)}%
-                    </p>
-                  </div>
-                  <div className="text-center p-4 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-gray-600 mb-1">Type-2</p>
-                    <p className="text-2xl font-bold text-purple-600">
-                      {analysisResults.type2_score?.toFixed(1)}%
-                    </p>
-                  </div>
-                  <div className="text-center p-4 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-gray-600 mb-1">Type-3</p>
-                    <p className="text-2xl font-bold text-purple-600">
-                      {analysisResults.type3_score?.toFixed(1)}%
-                    </p>
-                  </div>
-                  <div className="text-center p-4 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-gray-600 mb-1">Type-4</p>
-                    <p className="text-2xl font-bold text-purple-600">
-                      {analysisResults.type4_score?.toFixed(1)}%
-                    </p>
-                  </div>
-                </div>
-
-                {analysisResults.clonePairs?.length > 0 && (
-                  <div className="mt-6">
-                    <h3 className="font-bold text-gray-900 mb-3">Similar Submissions</h3>
-                    <div className="space-y-2">
-                      {analysisResults.clonePairs.map((pair, index) => (
-                        <div key={index} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                          <div>
-                            <p className="font-medium text-gray-900">{pair.student_b_name}</p>
-                            <p className="text-sm text-gray-600">{pair.clone_type} clone</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-lg font-bold text-purple-600">
-                              {pair.similarity?.toFixed(1)}%
-                            </p>
+              <div className="p-4 space-y-2">
+                {!submission.files?.length
+                  ? <p className="text-sm text-[#A8A29E] text-center py-6">No files found.</p>
+                  : submission.files.map((file, i) => {
+                    const lang = EXT_LANG[getExt(file.filename)];
+                    return (
+                      <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-[#F7F3EE]">
+                        <svg width="18" height="18" fill="none" stroke="#CF7249" strokeWidth="1.5" viewBox="0 0 24 24"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-[#1A1714] truncate">{file.filename}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs text-[#A8A29E]">{fmtSize(file.file_size)}</span>
+                            {lang && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${LANG_CLR[lang]||'bg-gray-100 text-gray-600'}`}>{lang}</span>}
                           </div>
                         </div>
-                      ))}
+                      </div>
+                    );
+                  })
+                }
+              </div>
+            </div>
+
+            {/* Analysis */}
+            {status === 'completed' && analysis && (
+              <div className="bg-white rounded-2xl border border-[#E8E1D8] overflow-hidden">
+                <div className="px-6 py-4 border-b border-[#F0EBE3] flex items-center justify-between">
+                  <h2 className="text-sm font-bold text-[#1A1714]">Analysis Results</h2>
+                  {isInstructor && <Link to={`/analysis/assignment/${submission.assignment_id}`} className="text-xs font-bold text-[#CF7249] hover:underline">Full Report →</Link>}
+                </div>
+                <div className="p-6 space-y-6">
+                  <div className="flex items-center gap-5 p-5 bg-[#F7F3EE] rounded-2xl">
+                    <div className={`text-4xl font-bold ${riskClr}`}>{overallPct}%</div>
+                    <div className="flex-1">
+                      <div className="h-3 bg-[#E8E1D8] rounded-full overflow-hidden mb-2">
+                        <div className={`h-full rounded-full ${barClr}`} style={{ width: `${overallPct}%` }} />
+                      </div>
+                      <p className="text-xs text-[#6B6560] font-medium">
+                        {overallPct >= 85 ? 'High similarity — review recommended' : overallPct >= 70 ? 'Moderate similarity' : 'Low similarity — looks original'}
+                      </p>
                     </div>
                   </div>
-                )}
-              </Card>
+                  <div className="grid grid-cols-2 gap-4">
+                    <ScoreBar label="Type-1 (Exact)"      value={analysis.type1_score} color="bg-blue-400"   />
+                    <ScoreBar label="Type-2 (Renamed)"    value={analysis.type2_score} color="bg-violet-400" />
+                    <ScoreBar label="Type-3 (Structural)" value={analysis.type3_score} color="bg-[#CF7249]"  />
+                    <ScoreBar label="Type-4 (Semantic)"   value={analysis.type4_score} color="bg-[#8B9BB4]"  />
+                  </div>
+                  {analysis.clonePairs?.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-bold text-[#1A1714] mb-3">Similar Submissions ({analysis.clonePairs.length})</h3>
+                      <div className="space-y-2">
+                        {analysis.clonePairs.map((pair, i) => {
+                          const s  = Math.round(norm(pair.similarity) * 100);
+                          const rc = s>=85 ? 'bg-[#FAEDEC] border-[#E8B5B0] text-[#C4827A]' : s>=70 ? 'bg-[#FEF3EC] border-[#F4C9AA] text-[#CF7249]' : 'bg-[#F7F3EE] border-[#E8E1D8] text-[#6B6560]';
+                          return (
+                            <div key={i} className={`flex items-center justify-between px-4 py-3 rounded-xl border ${rc}`}>
+                              <div>
+                                <p className="text-sm font-bold">{pair.student_b_name || `Submission #${pair.submission_b_id}`}</p>
+                                <p className="text-xs opacity-70 mt-0.5">{pair.clone_type} clone</p>
+                              </div>
+                              <span className="text-base font-bold">{s}%</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {status === 'failed' && (
+              <div className="bg-white rounded-2xl border border-red-200 p-6">
+                <p className="text-sm font-bold text-red-700 mb-1">Analysis Failed</p>
+                <p className="text-xs text-red-600">The analysis engine could not process this submission.</p>
+              </div>
             )}
           </div>
 
           {/* Sidebar */}
-          <div className="space-y-6">
-            <Card>
-              <h3 className="font-bold text-gray-900 mb-4">Status</h3>
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl border border-[#E8E1D8] p-5">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-[#A8A29E] mb-4">Info</h3>
               <div className="space-y-3">
-                <div>
-                  <p className="text-sm text-gray-600 mb-1">Analysis Status</p>
-                  <span className={`inline-block px-3 py-1 rounded-full text-sm font-semibold ${
-                    submission.analysis_status === 'completed' ? 'bg-green-100 text-green-700' :
-                    submission.analysis_status === 'processing' ? 'bg-blue-100 text-blue-700' :
-                    submission.analysis_status === 'failed' ? 'bg-red-100 text-red-700' :
-                    'bg-gray-100 text-gray-700'
-                  }`}>
-                    {submission.analysis_status}
-                  </span>
-                </div>
-                {submission.analyzed_at && (
-                  <div>
-                    <p className="text-sm text-gray-600 mb-1">Analyzed At</p>
-                    <p className="font-medium text-gray-900">
-                      {new Date(submission.analyzed_at).toLocaleString()}
-                    </p>
+                {[['Student',submission.student_name],['Course',`${submission.course_code} — ${submission.course_name}`],['Submitted',new Date(submission.submitted_at).toLocaleDateString()],['Files',submission.files?.length||0]].map(([label,value])=>(
+                  <div key={label}>
+                    <p className="text-[10px] font-bold text-[#A8A29E] uppercase tracking-wider">{label}</p>
+                    <p className="text-sm font-semibold text-[#1A1714] mt-0.5">{value}</p>
                   </div>
-                )}
+                ))}
               </div>
-            </Card>
-
-            <Card>
-              <h3 className="font-bold text-gray-900 mb-4">Course Info</h3>
-              <div className="space-y-2 text-sm">
-                <div>
-                  <p className="text-gray-600">Course</p>
-                  <p className="font-medium text-gray-900">{submission.course_name}</p>
-                </div>
-                <div>
-                  <p className="text-gray-600">Code</p>
-                  <p className="font-medium text-gray-900">{submission.course_code}</p>
-                </div>
-              </div>
-            </Card>
+            </div>
+            <div className="bg-white rounded-2xl border border-[#E8E1D8] p-5 space-y-2">
+              <Link to={`/assignments/${submission.assignment_id}`} className="block w-full text-center py-2 rounded-xl border border-[#E8E1D8] text-xs font-bold text-[#1A1714] hover:bg-[#F7F3EE] transition-colors">
+                View Assignment
+              </Link>
+              {isInstructor && (
+                <Link to={`/analysis/assignment/${submission.assignment_id}`} className="block w-full text-center py-2 rounded-xl bg-[#CF7249] text-white text-xs font-bold hover:bg-[#B85E38] transition-colors">
+                  Plagiarism Report
+                </Link>
+              )}
+            </div>
           </div>
         </div>
       </div>

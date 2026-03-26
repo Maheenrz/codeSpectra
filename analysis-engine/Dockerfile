@@ -1,11 +1,14 @@
-FROM python:3.9-slim-bullseye
+FROM python:3.10-slim-bullseye
 
 # Install System Dependencies
+# build-essential brings g++, gcc, make — needed for Type-4 I/O testing
+# (compiles student C++ submissions via subprocess in io_executor.py)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     git \
     curl \
     build-essential \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -35,4 +38,9 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:5000/health || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000", "--reload"]
+CMD ["uvicorn", "main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "5000", \
+     "--reload", \
+     "--timeout-keep-alive", "300", \
+     "--timeout-graceful-shutdown", "300"]

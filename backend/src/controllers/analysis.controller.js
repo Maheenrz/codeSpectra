@@ -24,28 +24,145 @@ const toHostPath = (enginePath) => {
 class AnalysisController {
 
   // ── Generic file upload analysis ──────────────────────────────────────────
+  // Accepts any mix of .cpp/.java/.py/.js/.ts + .zip files.
+  // ZIPs are extracted in-process (adm-zip) before forwarding to the engine.
+  // Result is normalised so the frontend always gets a consistent shape.
+  // The `types` form field (JSON) controls which clone types are returned.
   static async analyzeFiles(req, res) {
-    const uploadedPaths = [];
+    // Parse the detection-type toggles sent by the frontend
+    // { t1: bool, t2: bool, t3: bool, t4: bool }
+    // Map to canonical type names so we can filter the engine's results.
+    let enabledTypes = { type1: true, type2: true, type3: true, type4: false };
     try {
-      if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
-      if (req.files.length < 2) return res.status(400).json({ error: 'At least 2 files required' });
+      const raw = req.body?.types ? JSON.parse(req.body.types) : {};
+      enabledTypes = {
+        type1: raw.t1 !== false,
+        type2: raw.t2 !== false,
+        type3: raw.t3 !== false,
+        type4: raw.t4 !== false,
+      };
+    } catch (_) { /* use defaults */ }
+    const uploadedPaths = [];
+    const extractedPaths = [];
+    const tempDir = path.join(__dirname, '../../uploads/temp');
+
+    try {
+      // Ensure temp dir exists
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+      if (!req.files || req.files.length === 0)
+        return res.status(400).json({ error: 'No files uploaded' });
+
       req.files.forEach(f => uploadedPaths.push(f.path));
-      let types = {};
-      try { types = JSON.parse(req.body.types || '{}'); } catch (_) {}
+
+      // ── Extract any ZIPs ─────────────────────────────────────────────
+      const AdmZip  = require('adm-zip');
+      const CODE_EXT = new Set(['.cpp','.c','.h','.hpp','.cc','.cxx','.java','.py','.js','.jsx','.ts','.tsx']);
+      const allCodePaths = [];
+
+      for (const f of req.files) {
+        const ext = path.extname(f.originalname).toLowerCase();
+        if (ext === '.zip') {
+          // Extract into a sub-folder alongside the zip
+          const extractDir = f.path + '_extracted';
+          fs.mkdirSync(extractDir, { recursive: true });
+          extractedPaths.push(extractDir);
+          try {
+            const zip = new AdmZip(f.path);
+            zip.extractAllTo(extractDir, true);
+
+            // Walk extracted files — recursively extract nested ZIPs too.
+            // This handles the "class ZIP" pattern:
+            //   class.zip
+            //   ├── student1.zip   ← extracted here
+            //   ├── student2.zip
+            //   └── student3/      ← or plain folders
+            const walk = (dir) => {
+              for (const entry of fs.readdirSync(dir)) {
+                const full = path.join(dir, entry);
+                const stat = fs.statSync(full);
+                if (stat.isDirectory()) {
+                  walk(full);
+                } else if (path.extname(entry).toLowerCase() === '.zip') {
+                  // Nested student ZIP — extract it in place
+                  const nestedDir = full + '_nested';
+                  fs.mkdirSync(nestedDir, { recursive: true });
+                  extractedPaths.push(nestedDir);
+                  try {
+                    const nestedZip = new AdmZip(full);
+                    nestedZip.extractAllTo(nestedDir, true);
+                    walk(nestedDir);   // collect code files from student's zip
+                  } catch (nestedErr) {
+                    console.warn(`[Analysis] Nested ZIP extraction failed for ${entry}: ${nestedErr.message}`);
+                  }
+                } else if (CODE_EXT.has(path.extname(entry).toLowerCase())) {
+                  allCodePaths.push(full);
+                }
+              }
+            };
+            walk(extractDir);
+          } catch (zipErr) {
+            console.warn(`[Analysis] ZIP extraction failed for ${f.originalname}: ${zipErr.message}`);
+          }
+        } else if (CODE_EXT.has(ext)) {
+          allCodePaths.push(f.path);
+        }
+      }
+
+      if (allCodePaths.length < 2)
+        return res.status(400).json({ error: 'At least 2 code files required (after ZIP extraction)' });
+
+      // ── Forward code files to the engine ─────────────────────────────
       const FormData = require('form-data');
       const form = new FormData();
-      req.files.forEach(f => form.append('files', fs.createReadStream(f.path), f.originalname));
-      form.append('types', JSON.stringify(types));
-      form.append('mode', req.body.mode || 'detailed');
-      const response = await axios.post(`${ANALYSIS_ENGINE_URL}/api/analyze/detailed`, form,
-        { headers: form.getHeaders(), timeout: 300_000 });
-      return res.json(response.data);
+      allCodePaths.forEach(p => {
+        form.append('files', fs.createReadStream(p), path.basename(p));
+      });
+
+      const response = await axios.post(
+        `${ANALYSIS_ENGINE_URL}/api/analyze/detailed`,
+        form,
+        { headers: form.getHeaders(), timeout: 300_000 }
+      );
+
+      // ── Filter by enabled detection types ─────────────────────────────
+      // Engine returns all_pairs with primary_clone_type on each pair.
+      // Only return pairs whose clone type was enabled by the user's toggles.
+      const engineData = response.data;
+      if (engineData.all_pairs && Array.isArray(engineData.all_pairs)) {
+        engineData.all_pairs = engineData.all_pairs.filter(pair => {
+          const ct = pair.primary_clone_type || 'none';
+          if (ct === 'none') return false;
+          if (ct === 'type1' && !enabledTypes.type1) return false;
+          if (ct === 'type2' && !enabledTypes.type2) return false;
+          if (ct === 'type3' && !enabledTypes.type3) return false;
+          if (ct === 'type4' && !enabledTypes.type4) return false;
+          return true;
+        });
+        // Re-compute statistics over filtered pairs so the frontend
+        // stats cards (Total Pairs, Critical, High, Avg) are accurate.
+        const fp = engineData.all_pairs;
+        if (engineData.statistics) {
+          const scoreOf = p => p.combined_score ?? p.structural_score ?? 0;
+          engineData.statistics.total_pairs_after_filter = fp.length;
+          engineData.statistics.enabled_types = enabledTypes;
+        }
+      }
+      return res.json(engineData);
+
     } catch (error) {
-      if (error.response) return res.status(error.response.status).json(error.response.data || { error: 'Engine error' });
-      if (error.code === 'ECONNREFUSED') return res.status(503).json({ error: 'Analysis engine not running' });
+      if (error.response)
+        return res.status(error.response.status).json(error.response.data || { error: 'Engine error' });
+      if (error.code === 'ECONNREFUSED')
+        return res.status(503).json({ error: 'Analysis engine not running. Make sure Docker containers are up.' });
       return res.status(500).json({ error: 'File analysis failed', details: error.message });
     } finally {
+      // Clean up all uploaded files
       uploadedPaths.forEach(p => { try { fs.unlinkSync(p); } catch (_) {} });
+      // Clean up extracted ZIP directories
+      extractedPaths.forEach(dir => {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+      });
     }
   }
 
@@ -83,7 +200,29 @@ class AnalysisController {
       const threshold = parseFloat(req.query.threshold) || 50;
       const results   = await AnalysisResult.findByAssignment(assignmentId);
       const highSimilarityPairs = await ClonePair.findByAssignment(assignmentId, threshold);
-      res.json({ results, highSimilarityPairs });
+      // Return detection settings so the frontend can display which
+      // types were enabled when analysis was run for this assignment.
+      let assignment_settings = null;
+      try {
+        const { rows: [asgn] } = await pool.query(
+          `SELECT enable_type1, enable_type2, enable_type3, enable_type4,
+                  high_similarity_threshold, medium_similarity_threshold
+           FROM assignments WHERE assignment_id = $1`,
+          [assignmentId]
+        );
+        if (asgn) {
+          assignment_settings = {
+            type1:            asgn.enable_type1,
+            type2:            asgn.enable_type2,
+            type3:            asgn.enable_type3,
+            type4:            asgn.enable_type4,
+            high_threshold:   asgn.high_similarity_threshold,
+            medium_threshold: asgn.medium_similarity_threshold,
+          };
+        }
+      } catch (_) {}
+
+      res.json({ results, highSimilarityPairs, assignment_settings });
     } catch (error) {
       res.status(500).json({ error: 'Failed to get results', details: error.message });
     }
@@ -221,6 +360,151 @@ class AnalysisController {
       res.json(health);
     } catch (error) {
       res.status(500).json({ error: 'Health check failed', details: error.message });
+    }
+  }
+
+  // ── CSV report: upload files → engine runs analysis + generates report ────
+  // Proxies to POST /api/report/csv on the Python engine.
+  // Extracts ZIPs (same as analyzeFiles), then streams the CSV back.
+  static async proxyReportCsv(req, res) {
+    const uploadedPaths  = [];
+    const extractedDirs  = [];
+    const tempDir = path.join(__dirname, '../../uploads/temp');
+
+    try {
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+      if (!req.files || req.files.length === 0)
+        return res.status(400).json({ error: 'No files uploaded' });
+
+      req.files.forEach(f => uploadedPaths.push(f.path));
+
+      // ── Extract ZIPs (same logic as analyzeFiles) ───────────────────
+      const AdmZip   = require('adm-zip');
+      const CODE_EXT = new Set(['.cpp','.c','.h','.hpp','.cc','.cxx','.java','.py','.js','.jsx','.ts','.tsx']);
+      const allCodePaths = [];
+
+      for (const f of req.files) {
+        const ext = path.extname(f.originalname).toLowerCase();
+        if (ext === '.zip') {
+          const extractDir = f.path + '_extracted';
+          fs.mkdirSync(extractDir, { recursive: true });
+          extractedDirs.push(extractDir);
+          try {
+            const zip = new AdmZip(f.path);
+            zip.extractAllTo(extractDir, true);
+            const walk = (dir) => {
+              for (const entry of fs.readdirSync(dir)) {
+                const full = path.join(dir, entry);
+                if (fs.statSync(full).isDirectory()) walk(full);
+                else if (CODE_EXT.has(path.extname(entry).toLowerCase())) allCodePaths.push(full);
+              }
+            };
+            walk(extractDir);
+          } catch (zipErr) {
+            console.warn(`[CSV] ZIP extraction failed: ${zipErr.message}`);
+          }
+        } else if (CODE_EXT.has(ext)) {
+          allCodePaths.push(f.path);
+        }
+      }
+
+      if (allCodePaths.length < 2)
+        return res.status(400).json({ error: 'At least 2 code files required for CSV report' });
+
+      // ── Forward to engine /api/report/csv ─────────────────────────
+      const { assignment_id = '', language = 'cpp', detailed = 'true' } = req.query;
+      const FormData = require('form-data');
+      const form = new FormData();
+      allCodePaths.forEach(p => form.append('files', fs.createReadStream(p), path.basename(p)));
+
+      const engineUrl = `${ANALYSIS_ENGINE_URL}/api/report/csv?assignment_id=${assignment_id}&language=${language}&detailed=${detailed}`;
+      const response  = await axios.post(engineUrl, form, {
+        headers:      form.getHeaders(),
+        responseType: 'stream',
+        timeout:      300_000,
+      });
+
+      const filename = `codespectra_report_${assignment_id || 'analysis'}_${Date.now()}.csv`;
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      response.data.pipe(res);
+
+    } catch (error) {
+      if (error.code === 'ECONNREFUSED')
+        return res.status(503).json({ error: 'Analysis engine not running' });
+      return res.status(500).json({ error: 'CSV report failed', details: error.message });
+    } finally {
+      uploadedPaths.forEach(p => { try { fs.unlinkSync(p); } catch (_) {} });
+      extractedDirs.forEach(d => { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} });
+    }
+  }
+
+  // ── CSV from a completed async assignment job ──────────────────────
+  static async proxyJobCsv(req, res) {
+    try {
+      const { jobId } = req.params;
+      const { assignment_id = '', language = 'cpp' } = req.query;
+      const engineUrl = `${ANALYSIS_ENGINE_URL}/api/report/csv/${jobId}?assignment_id=${assignment_id}&language=${language}`;
+      const response  = await axios.get(engineUrl, { responseType: 'stream', timeout: 30_000 });
+      const filename  = `codespectra_assignment_${assignment_id || jobId}_${Date.now()}.csv`;
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      response.data.pipe(res);
+    } catch (error) {
+      return res.status(500).json({ error: 'CSV job export failed', details: error.message });
+    }
+  }
+
+  // ── Class ZIP: upload zip → engine kicks off async job → return job_id ──
+  // The engine's /api/analyze/zip endpoint handles:
+  //   - class.zip → {student1.zip, student2.zip, ...}  (Structure A)
+  //   - class.zip → {student1/, student2/, ...}         (Structure B)
+  //   - project.zip (flat files)                          (Structure C)
+  static async analyzeClassZip(req, res) {
+    const uploadedPath = req.file?.path;
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No ZIP file uploaded' });
+      if (!req.file.originalname.toLowerCase().endsWith('.zip'))
+        return res.status(400).json({ error: 'Only .zip files accepted on this endpoint' });
+
+      // Proxy the zip directly to the engine
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('file', fs.createReadStream(uploadedPath), req.file.originalname);
+
+      const response = await axios.post(
+        `${ANALYSIS_ENGINE_URL}/api/analyze/zip`,
+        form,
+        { headers: form.getHeaders(), timeout: 60_000 },
+      );
+
+      return res.json(response.data);
+    } catch (error) {
+      console.error('[analyzeClassZip]', error.message);
+      if (error.code === 'ECONNREFUSED')
+        return res.status(503).json({ error: 'Analysis engine not running' });
+      const detail = error.response?.data || error.message;
+      return res.status(500).json({ error: 'Class ZIP analysis failed', details: detail });
+    } finally {
+      if (uploadedPath) { try { fs.unlinkSync(uploadedPath); } catch (_) {} }
+    }
+  }
+
+  // ── Poll class ZIP job results from the engine ————————————————
+  static async getZipResults(req, res) {
+    try {
+      const { jobId } = req.params;
+      const response = await axios.get(
+        `${ANALYSIS_ENGINE_URL}/api/analyze/results/${jobId}`,
+        { timeout: 10_000 },
+      );
+      return res.json(response.data);
+    } catch (error) {
+      if (error.response?.status === 404)
+        return res.status(404).json({ error: `Job ${req.params.jobId} not found` });
+      if (error.code === 'ECONNREFUSED')
+        return res.status(503).json({ error: 'Analysis engine not running' });
+      return res.status(500).json({ error: 'Failed to poll job results', details: error.message });
     }
   }
 }

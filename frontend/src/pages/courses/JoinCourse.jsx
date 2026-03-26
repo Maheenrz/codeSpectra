@@ -2,190 +2,126 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import courseService from '../../services/courseService';
-import Card from '../../components/common/Card';
+
+const inputClass = `w-full px-4 py-3 rounded-xl border border-[#E8E1D8] bg-[#F7F3EE]
+  text-sm text-[#1A1714] placeholder-[#A8A29E]
+  focus:outline-none focus:ring-2 focus:ring-[#CF7249] focus:border-transparent transition-all`;
 
 const JoinCourse = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [joinCode, setJoinCode] = useState('');
+  const { user, logout } = useAuth();
+  const [joinCode, setJoinCode]         = useState('');
   const [coursePreview, setCoursePreview] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState('');
+  const [success, setSuccess]           = useState('');
 
   const handlePreview = async () => {
-    if (!joinCode.trim()) {
-      setError('Please enter a join code');
-      return;
-    }
-
-    setError('');
-    setLoading(true);
-
+    if (!joinCode.trim()) { setError('Please enter a join code'); return; }
+    setError(''); setLoading(true);
     try {
       const course = await courseService.getCourseByJoinCode(joinCode.trim());
       setCoursePreview(course);
-    } catch (err) {
+    } catch {
       setError('Invalid join code. Please check and try again.');
       setCoursePreview(null);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   const handleJoin = async () => {
-    setError('');
-    setLoading(true);
-
+    setError(''); setLoading(true);
     try {
       const result = await courseService.enrollWithJoinCode(joinCode.trim());
-      setSuccess('Successfully enrolled in course!');
-      
-      setTimeout(() => {
-        navigate(`/courses/${result.courseId}`);
-      }, 1500);
+      setSuccess('Successfully enrolled!');
+      setTimeout(() => navigate(`/courses/${result.courseId}`), 1500);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to join course');
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-4xl mx-auto px-6 py-6">
-          <Link to="/courses" className="text-purple-600 hover:text-purple-700 mb-4 inline-block">
-            ← Back to Courses
-          </Link>
-          <h1 className="text-3xl font-bold text-gray-900">Join a Course</h1>
-          <p className="text-gray-600 mt-2">Enter the join code provided by your instructor</p>
+    <div className="min-h-screen bg-[#F7F3EE]">
+      <main className="max-w-xl mx-auto px-6 pt-20 pb-12">
+        <Link to="/courses" className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#A8A29E] hover:text-[#1A1714] mb-6 transition-colors">
+          ← Back to Courses
+        </Link>
+
+        <div className="mb-8">
+          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#2D6A6A] mb-1">Student</p>
+          <h1 className="text-3xl font-bold text-[#1A1714]">Join a Course</h1>
+          <p className="text-sm text-[#6B6560] mt-1">Enter the join code from your instructor.</p>
         </div>
-      </div>
 
-      <div className="max-w-4xl mx-auto px-6 py-8">
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg">
-            {error}
+        {error   && <div className="mb-4 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>}
+        {success && <div className="mb-4 px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-700">{success}</div>}
+
+        <div className="bg-white rounded-2xl border border-[#E8E1D8] p-8 space-y-6">
+          <div>
+            <label className="block text-sm font-semibold text-[#1A1714] mb-1.5">Course Join Code</label>
+            <div className="flex gap-3">
+              <input type="text" value={joinCode}
+                onChange={e => setJoinCode(e.target.value.toUpperCase())}
+                onKeyDown={e => e.key === 'Enter' && handlePreview()}
+                placeholder="e.g. ABC123XY" maxLength={10}
+                className={inputClass + ' font-mono text-lg tracking-widest flex-1'} />
+              <button onClick={handlePreview} disabled={loading || !joinCode.trim()}
+                className="btn-ghost disabled:opacity-50 flex-shrink-0">
+                {loading ? 'Checking…' : 'Preview'}
+              </button>
+            </div>
+            <p className="text-xs text-[#A8A29E] mt-2">Ask your instructor for the course join code.</p>
           </div>
-        )}
 
-        {success && (
-          <div className="mb-6 p-4 bg-green-50 border border-green-200 text-green-700 rounded-lg">
-            {success}
-          </div>
-        )}
-
-        <Card>
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Course Join Code
-              </label>
+          {coursePreview && (
+            <div className="border-t border-[#F0EBE3] pt-6">
+              <p className="text-xs font-bold uppercase tracking-widest text-[#A8A29E] mb-4">Course Preview</p>
+              <div className="bg-[#F7F3EE] rounded-xl p-5 mb-5">
+                <div className="flex items-start justify-between mb-3">
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-[#FEF3EC] text-[#CF7249]">
+                    {coursePreview.course_code}
+                  </span>
+                  <span className="text-xs text-[#A8A29E]">{coursePreview.semester} {coursePreview.year}</span>
+                </div>
+                <h3 className="font-bold text-[#1A1714] text-lg mb-1">{coursePreview.course_name}</h3>
+                <p className="text-sm text-[#6B6560]">Instructor: {coursePreview.instructor_name}</p>
+                <div className="flex gap-5 mt-3 text-sm text-[#6B6560]">
+                  <span><strong className="text-[#1A1714]">{coursePreview.student_count || 0}</strong> students</span>
+                </div>
+              </div>
               <div className="flex gap-3">
-                <input
-                  type="text"
-                  value={joinCode}
-                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                  placeholder="e.g., ABC123XY"
-                  maxLength="10"
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent uppercase font-mono text-lg"
-                  onKeyPress={(e) => e.key === 'Enter' && handlePreview()}
-                />
-                <button
-                  onClick={handlePreview}
-                  disabled={loading || !joinCode.trim()}
-                  className="btn-secondary disabled:bg-gray-400"
-                >
-                  {loading ? 'Checking...' : 'Preview'}
+                <button onClick={() => { setCoursePreview(null); setJoinCode(''); }}
+                  className="btn-ghost flex-1 justify-center">
+                  Cancel
+                </button>
+                <button onClick={handleJoin} disabled={loading}
+                  className="btn-teal flex-1 justify-center disabled:opacity-50">
+                  {loading ? 'Joining…' : 'Join This Course'}
                 </button>
               </div>
-              <p className="text-sm text-gray-500 mt-2">
-                Ask your instructor for the course join code
-              </p>
             </div>
+          )}
+        </div>
 
-            {coursePreview && (
-              <div className="border-t pt-6">
-                <h3 className="text-lg font-bold text-gray-900 mb-4">Course Preview</h3>
-                <div className="bg-gradient-to-r from-purple-50 to-purple-100 rounded-lg p-6">
-                  <div className="flex justify-between items-start mb-4">
-                    <div>
-                      <h4 className="text-2xl font-bold text-gray-900 mb-2">
-                        {coursePreview.course_code}
-                      </h4>
-                      <p className="text-lg text-gray-700 mb-2">{coursePreview.course_name}</p>
-                      <p className="text-gray-600">
-                        Instructor: {coursePreview.instructor_name}
-                      </p>
-                    </div>
-                    <span className="px-4 py-2 bg-purple-600 text-white rounded-lg font-semibold">
-                      {coursePreview.semester} {coursePreview.year}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 pt-4 border-t border-purple-200">
-                    <div>
-                      <p className="text-sm text-gray-600">Students Enrolled</p>
-                      <p className="text-2xl font-bold text-purple-600">
-                        {coursePreview.student_count || 0}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Join Code</p>
-                      <p className="text-2xl font-bold text-purple-600 font-mono">
-                        {coursePreview.join_code}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-3 mt-6">
-                  <button
-                    onClick={() => {
-                      setCoursePreview(null);
-                      setJoinCode('');
-                    }}
-                    className="btn-secondary"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleJoin}
-                    disabled={loading}
-                    className="btn-primary disabled:bg-gray-400"
-                  >
-                    {loading ? 'Joining...' : 'Join This Course'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </Card>
-
-        {/* Instructions */}
-        <Card className="mt-6">
-          <h3 className="font-bold text-gray-900 mb-3">How to join a course</h3>
-          <ol className="space-y-2 text-gray-700">
-            <li className="flex gap-3">
-              <span className="font-bold text-purple-600">1.</span>
-              <span>Get the join code from your instructor (email, LMS, or in class)</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="font-bold text-purple-600">2.</span>
-              <span>Enter the code above and click "Preview"</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="font-bold text-purple-600">3.</span>
-              <span>Verify the course details and click "Join This Course"</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="font-bold text-purple-600">4.</span>
-              <span>You'll be redirected to the course page</span>
-            </li>
+        {/* Steps */}
+        <div className="bg-white rounded-2xl border border-[#E8E1D8] p-6 mt-4">
+          <p className="text-xs font-bold uppercase tracking-widest text-[#A8A29E] mb-4">How it works</p>
+          <ol className="space-y-3">
+            {[
+              'Get the join code from your instructor',
+              'Enter the code above and click Preview',
+              'Verify the course details and click Join',
+              'You\'ll be redirected to the course page',
+            ].map((step, i) => (
+              <li key={i} className="flex items-start gap-3 text-sm text-[#6B6560]">
+                <span className="w-5 h-5 rounded-full bg-[#EBF4F4] text-[#2D6A6A] text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
+                  {i + 1}
+                </span>
+                {step}
+              </li>
+            ))}
           </ol>
-        </Card>
-      </div>
+        </div>
+      </main>
     </div>
   );
 };
