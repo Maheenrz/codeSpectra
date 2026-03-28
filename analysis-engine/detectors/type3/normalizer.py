@@ -141,14 +141,23 @@ _STRUCT_MAP: Dict[str, str] = {
 
 def structurally_normalize_tokens(tokens: List[str]) -> List[str]:
     """
-    Level 2 — Structural normalization.
+    Level 2 — Structural normalization applied on top of Level-1 output.
 
-    Applied AFTER Level 1 (blind normalization).
-    Collapses control-flow keywords to structural categories so that
-    two fragments with the same algorithm but different loop types
-    (e.g., for-loop vs while-loop) score higher in normalized LCS.
-
-    Input: output of normalize_tokens()
-    Output: further normalized token list
+    Maps control-flow keywords → abstract structural tokens (LOOP, COND, etc.)
+    Also maps common loop-counter variable names to a generic VAR token so
+    'for i' and 'for idx' are treated as structurally equivalent.
     """
-    return [_STRUCT_MAP.get(tok, tok) for tok in tokens]
+    # Common single-letter / short loop-counter names used by students.
+    # These are usually already VAR_N after Level 1, but in case they
+    # appear as raw tokens (e.g. in test contexts) we handle them here too.
+    _COUNTER_VARS = {'i', 'j', 'k', 'x', 'y', 'z', 'n', 'm',
+                     'temp', 'tmp', 'arr', 'array', 'data', 'result', 'ans'}
+    normalized = []
+    for tok in tokens:
+        if tok in _STRUCT_MAP:
+            normalized.append(_STRUCT_MAP[tok])
+        elif tok in _COUNTER_VARS:
+            normalized.append('VAR')
+        else:
+            normalized.append(tok)
+    return normalized

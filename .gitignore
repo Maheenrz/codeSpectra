@@ -5,15 +5,15 @@ venv/
 __pycache__/
 *.pyc
 
-# Environment
+# Environment files — never commit these
 .env
 .env.local
 
-# Build
+# Build output
 dist/
 build/
 
-# Uploads
+# Uploaded files (keep the directory itself)
 uploads/*
 !uploads/.gitkeep
 
@@ -21,28 +21,20 @@ uploads/*
 logs/
 *.log
 
-# OS
+# OS junk
 .DS_Store
 Thumbs.db
 
-# IDE
+# IDE config
 .vscode/
 .idea/
 
-
-.env# Large files
+# Large binary files — models, datasets, etc.
 *.joblib
 *.parquet
 analysis-engine/detectors/type3/models/
 analysis-engine/data/bigclonebench/joern-cli.zip
-*.zip # optional: block all zips
-
-# Large files - never commit these
 joern-cli.zip
-*.zip
-*.parquet
-*.joblib
 analysis-engine/data/
-analysis-engine/detectors/type3/models/
 analysis-engine/detectors/type4/joern/docker/workspace/
 dsa_dataset/

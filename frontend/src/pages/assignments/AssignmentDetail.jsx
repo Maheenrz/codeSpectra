@@ -4,13 +4,26 @@ import { useAuth } from '../../context/AuthContext';
 import assignmentService from '../../services/assignmentService';
 import submissionService from '../../services/submissionService';
 import analysisService from '../../services/analysisService';
+import PageLoader from '../../Components/common/PageLoader';
 
 const IconBack   = () => <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>;
 const IconScan   = () => <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>;
 const IconChart  = () => <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
 const IconUpload = () => <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>;
-const IconLogOut = () => <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
 const Spin = ({ size=14 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="animate-spin"><path d="M12 2a10 10 0 0110 10" opacity="0.3"/><path d="M12 2a10 10 0 0110 10"/></svg>;
+
+// Minimalist "not found" vector
+const NotFoundVector = () => (
+  <svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="mx-auto mb-5 opacity-60">
+    <rect x="15" y="12" width="70" height="76" rx="8" stroke="#CF7249" strokeWidth="2.2" fill="#FEF3EC"/>
+    <line x1="28" y1="36" x2="72" y2="36" stroke="#E8D5C8" strokeWidth="2" strokeLinecap="round"/>
+    <line x1="28" y1="48" x2="62" y2="48" stroke="#E8D5C8" strokeWidth="2" strokeLinecap="round"/>
+    <line x1="28" y1="60" x2="54" y2="60" stroke="#E8D5C8" strokeWidth="2" strokeLinecap="round"/>
+    <circle cx="70" cy="72" r="14" fill="white" stroke="#CF7249" strokeWidth="2.2"/>
+    <line x1="66" y1="68" x2="74" y2="76" stroke="#CF7249" strokeWidth="2.2" strokeLinecap="round"/>
+    <line x1="74" y1="68" x2="66" y2="76" stroke="#CF7249" strokeWidth="2.2" strokeLinecap="round"/>
+  </svg>
+);
 
 const STATUS = {
   completed:  { bg:'bg-emerald-50', text:'text-emerald-700', dot:'bg-emerald-500',            label:'Done'      },
@@ -30,30 +43,39 @@ const StatusBadge = ({ status }) => {
 
 const AssignmentDetail = () => {
   const { assignmentId } = useParams();
-  const { user, isStudent, isInstructor, logout } = useAuth();
+  const { user, isStudent, isInstructor } = useAuth();
   const [assignment,   setAssignment]   = useState(null);
   const [submissions,  setSubmissions]  = useState([]);
   const [mySubmission, setMySubmission] = useState(null);
   const [loading,      setLoading]      = useState(true);
+  const [notFound,     setNotFound]     = useState(false);
   const [analyzing,    setAnalyzing]    = useState(false);
   const [analyzeMsg,   setAnalyzeMsg]   = useState('');
   const [analyzeError, setAnalyzeError] = useState('');
   const pollRef = useRef(null);
 
   const fetchData = useCallback(async () => {
+    setLoading(true);
+    setNotFound(false);
     try {
       const asgn = await assignmentService.getAssignmentById(assignmentId);
+      if (!asgn) { setNotFound(true); return; }
       setAssignment(asgn);
+
       if (isInstructor) {
         const subs = await assignmentService.getAssignmentSubmissions(assignmentId);
-        setSubmissions(subs);
+        setSubmissions(Array.isArray(subs) ? subs : []);
       } else if (isStudent) {
         const all  = await submissionService.getStudentSubmissions();
         const mine = all.find(s => s.assignment_id === parseInt(assignmentId));
         setMySubmission(mine || null);
       }
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+    } catch (e) {
+      console.error(e);
+      if (e?.response?.status === 404) setNotFound(true);
+    } finally {
+      setLoading(false);
+    }
   }, [assignmentId, isInstructor, isStudent]);
 
   useEffect(() => {
@@ -89,12 +111,22 @@ const AssignmentDetail = () => {
     }
   };
 
-  if (loading) return (
-    <div className="min-h-screen bg-[#F7F3EE] flex items-center justify-center">
-      <div className="w-8 h-8 border-2 border-[#CF7249] border-t-transparent rounded-full animate-spin" />
+  // ── Loading → always shows full CodeSpectra landing style ─────────────────
+  if (loading) return <PageLoader message="Loading assignment…" />;
+
+  // ── Not found ─────────────────────────────────────────────────────────────
+  if (notFound || !assignment) return (
+    <div className="min-h-screen bg-[#F7F3EE] flex flex-col items-center justify-center gap-3 px-6 text-center">
+      <NotFoundVector />
+      <p className="text-lg font-bold text-[#1A1714]">Assignment not found.</p>
+      <p className="text-sm text-[#A8A29E] max-w-xs">
+        This assignment may have been deleted or you may not have access.
+      </p>
+      <Link to="/courses" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-[#CF7249] px-5 py-2.5 rounded-xl hover:bg-[#B85E38] transition-colors">
+        ← Back to Courses
+      </Link>
     </div>
   );
-  if (!assignment) return <div className="min-h-screen bg-[#F7F3EE] flex items-center justify-center"><p className="text-[#6B6560]">Assignment not found.</p></div>;
 
   const isPastDue      = new Date(assignment.due_date) < new Date();
   const completedCount = submissions.filter(s => s.analysis_status === 'completed').length;
@@ -127,6 +159,9 @@ const AssignmentDetail = () => {
                 <Link to={`/analysis/assignment/${assignmentId}`} className="btn-ghost gap-2">
                   <IconChart /> View report
                 </Link>
+                <Link to={`/assignments/edit/${assignmentId}`} className="btn-ghost gap-2">
+                  ✏️ Edit
+                </Link>
               </div>
             )}
             {isStudent && !isPastDue && (
@@ -135,6 +170,7 @@ const AssignmentDetail = () => {
               </Link>
             )}
           </div>
+
           {analyzeMsg && (
             <div className="mt-4 flex items-center gap-2.5 px-4 py-3 rounded-xl bg-[#EBF4F4] border border-[#2D6A6A]/20">
               {analyzing && <Spin />}
@@ -153,13 +189,13 @@ const AssignmentDetail = () => {
         <div className="grid lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-5">
 
-            {/* Description — large text for readability */}
+            {/* Description */}
             <div className="bg-white rounded-2xl border border-[#E8E1D8] p-6">
               <h2 className="text-sm font-bold text-[#1A1714] mb-4">Description</h2>
               <p className="text-[#1A1714] text-base leading-relaxed whitespace-pre-wrap">{assignment.description}</p>
             </div>
 
-            {/* Questions — fully visible for students */}
+            {/* Questions */}
             {assignment.questions?.length > 0 && (
               <div className="bg-white rounded-2xl border border-[#E8E1D8] p-6">
                 <h2 className="text-sm font-bold text-[#1A1714] mb-4">Questions ({assignment.questions.length})</h2>
@@ -174,7 +210,7 @@ const AssignmentDetail = () => {
                           <p className="text-xs font-mono text-[#A8A29E] mt-2">Expected: {q.expectedFiles.join(', ')}</p>
                         )}
                       </div>
-                      <span className="text-sm font-bold text-[#CF7249] flex-shrink-0">{q.maxMarks} pts</span>
+                      <span className="text-sm font-bold text-[#CF7249] flex-shrink-0">{(q.maxMarks !== undefined && q.maxMarks !== null) ? q.maxMarks : '—'} pts</span>
                     </div>
                   ))}
                 </div>
@@ -197,8 +233,10 @@ const AssignmentDetail = () => {
             )}
 
             {isStudent && !mySubmission && (
-              <div className="bg-white rounded-2xl border border-[#E8E1D8] p-8 text-center">
-                <div className="w-12 h-12 rounded-2xl bg-[#FEF3EC] text-[#CF7249] flex items-center justify-center mx-auto mb-4"><IconUpload /></div>
+              <div className="bg-white rounded-2xl border border-[#E8E1D8] p-10 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-[#FEF3EC] text-[#CF7249] flex items-center justify-center mx-auto mb-4">
+                  <IconUpload />
+                </div>
                 <p className="text-sm font-semibold text-[#1A1714] mb-1">No submission yet</p>
                 {!isPastDue
                   ? <Link to={`/submissions/submit?assignmentId=${assignmentId}`} className="btn-orange mt-4 inline-flex">Submit now</Link>
@@ -212,7 +250,10 @@ const AssignmentDetail = () => {
                 <div className="flex items-center justify-between px-6 py-4 border-b border-[#F0EBE3]">
                   <div>
                     <h2 className="text-sm font-bold text-[#1A1714]">
-                      Submissions <span className="text-[10px] font-semibold text-[#A8A29E] bg-[#F7F3EE] px-1.5 py-0.5 rounded-full ml-1">{submissions.length}</span>
+                      Submissions{' '}
+                      <span className="text-[10px] font-semibold text-[#A8A29E] bg-[#F7F3EE] px-1.5 py-0.5 rounded-full ml-1">
+                        {submissions.length}
+                      </span>
                     </h2>
                     {submissions.length > 0 && (
                       <p className="text-[11px] text-[#A8A29E] mt-0.5">
@@ -222,7 +263,15 @@ const AssignmentDetail = () => {
                   </div>
                 </div>
                 {submissions.length === 0 ? (
-                  <div className="px-6 py-12 text-center"><p className="text-sm text-[#6B6560]">No submissions yet.</p></div>
+                  <div className="px-6 py-14 text-center">
+                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="mx-auto mb-4 opacity-40">
+                      <rect x="8" y="6" width="32" height="36" rx="4" stroke="#CF7249" strokeWidth="1.8" fill="#FEF3EC"/>
+                      <line x1="14" y1="18" x2="34" y2="18" stroke="#E8D5C8" strokeWidth="1.5" strokeLinecap="round"/>
+                      <line x1="14" y1="24" x2="28" y2="24" stroke="#E8D5C8" strokeWidth="1.5" strokeLinecap="round"/>
+                      <line x1="14" y1="30" x2="22" y2="30" stroke="#E8D5C8" strokeWidth="1.5" strokeLinecap="round"/>
+                    </svg>
+                    <p className="text-sm text-[#6B6560]">No submissions yet.</p>
+                  </div>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full">
@@ -261,7 +310,12 @@ const AssignmentDetail = () => {
             <div className="bg-white rounded-2xl border border-[#E8E1D8] p-5">
               <h3 className="text-xs font-bold uppercase tracking-widest text-[#A8A29E] mb-4">Settings</h3>
               <div className="space-y-3">
-                {[['Language',assignment.primary_language],['Max size',`${assignment.max_file_size_mb} MB`],['Extensions',assignment.allowed_extensions],['Submission',assignment.submission_mode||'files']].map(([label,value])=>(
+                {[
+                  ['Language',  assignment.primary_language],
+                  ['Max size',  `${assignment.max_file_size_mb} MB`],
+                  ['Extensions',assignment.allowed_extensions],
+                  ['Submission',assignment.submission_mode||'files'],
+                ].map(([label,value])=>(
                   <div key={label} className="flex justify-between items-start gap-2">
                     <span className="text-xs text-[#A8A29E]">{label}</span>
                     <span className="text-xs font-semibold text-[#1A1714] text-right">{value||'—'}</span>
@@ -273,7 +327,12 @@ const AssignmentDetail = () => {
             <div className="bg-white rounded-2xl border border-[#E8E1D8] p-5">
               <h3 className="text-xs font-bold uppercase tracking-widest text-[#A8A29E] mb-4">Detection</h3>
               <div className="space-y-2">
-                {[[assignment.enable_type1,'Type-1','Exact copy','#C4827A','#FAEDEC'],[assignment.enable_type2,'Type-2','Renamed variables','#CF7249','#FEF3EC'],[assignment.enable_type3,'Type-3','Near-miss','#2D6A6A','#EBF4F4'],[assignment.enable_type4,'Type-4','Semantic (beta)','#8B9BB4','#EFF2F7']].map(([enabled,label,desc,accent,bg])=>(
+                {[
+                  [assignment.enable_type1,'Type-1','Exact copy','#C4827A','#FAEDEC'],
+                  [assignment.enable_type2,'Type-2','Renamed variables','#CF7249','#FEF3EC'],
+                  [assignment.enable_type3,'Type-3','Near-miss','#2D6A6A','#EBF4F4'],
+                  [assignment.enable_type4,'Type-4','Semantic (beta)','#8B9BB4','#EFF2F7'],
+                ].map(([enabled,label,desc,accent,bg])=>(
                   <div key={label} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg ${enabled?'':'opacity-40'}`} style={{background:enabled?bg:'#F7F3EE'}}>
                     <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{background:enabled?accent:'#A8A29E'}} />
                     <span className="text-[11px] font-bold" style={{color:enabled?accent:'#A8A29E'}}>{label}</span>

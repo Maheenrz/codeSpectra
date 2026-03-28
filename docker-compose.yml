@@ -119,6 +119,7 @@ services:
     volumes:
       - ./analysis-engine:/app
       - analysis_workspace:/workspace
+      - analysis_cache:/app/.cache
       - ./backend/uploads:/app/uploads
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -151,6 +152,7 @@ volumes:
   pgadmin_data:
   redis_data:
   analysis_workspace:
+  analysis_cache:
 
 # ==========================================
 # NETWORKS

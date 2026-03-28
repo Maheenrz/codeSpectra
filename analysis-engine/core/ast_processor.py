@@ -7,6 +7,12 @@ import re
 import difflib
 from typing import Optional, Dict, Any
 
+# Suppress tree-sitter FutureWarning at module level so it never appears
+# in logs, even when get_parser() is called repeatedly at runtime.
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 # Try tree-sitter (optional — only works if grammars are installed)
 _TREE_SITTER_OK = False
 try:

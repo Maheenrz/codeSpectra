@@ -47,12 +47,16 @@ from __future__ import annotations
 import json
 import sys
 import time
+import warnings
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import joblib
 import numpy as np
+
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn.utils.parallel")
+warnings.filterwarnings("ignore", message=".*sklearn.utils.parallel.delayed.*")
 
 _DETECTOR_DIR = Path(__file__).resolve().parent
 _REPO_ROOT    = _DETECTOR_DIR.parents[2]
@@ -79,10 +83,11 @@ from detectors.type3.lcs_comparator import get_matching_blocks
 from detectors.type3.clone_clusterer import CloneClusterer
 
 
+
 class Type3HybridDetector:
     """
-    Hybrid Type-3 clone detector v3.0.
-
+    Research-based hybrid detection (NiCad + Winnowing + AST)
+    Based on: "Comparison and evaluation of clone detection tools" (Bellon et al., 2007)
     Detects VST3, ST3, and MT3 clones with multi-fragment aggregation.
     """
 
@@ -97,8 +102,8 @@ class Type3HybridDetector:
 
     def __init__(
         self,
-        hybrid_threshold: float = 0.50,
-        ml_threshold:     float = 0.382,
+        hybrid_threshold: float = 0.70,
+        ml_threshold:     float = 0.70,
     ):
         self.tokenizer    = CodeTokenizer()
         self.ast_proc     = ASTProcessor()
@@ -110,19 +115,37 @@ class Type3HybridDetector:
         self._clusterer = CloneClusterer()
         self._frag_cache: Dict[str, List[Fragment]] = {}
 
-        self._adapter    = ASTMLAdapter(
+        self._adapter = ASTMLAdapter(
             cache_dir=str(_REPO_ROOT / "analysis-engine" / "feature_cache")
         )
-        self._models_dir = _DETECTOR_DIR / "models"
-        self.clf:          Any        = None
-        self.feature_names: List[str] = []
-        self.ml_enabled:   bool       = False
+
+        # ML model state — must be initialised here so the attribute always
+        # exists before _load_model() or any method references it.
+        self._models_dir:    Path      = _DETECTOR_DIR / "models"
+        self.clf:            Any       = None
+        self.feature_names:  List[str] = []
+        self.ml_enabled:     bool      = False
+
+        # Research-based weights (Bellon et al. 2007 — NiCad + Winnowing)
+        self.WEIGHTS = {
+            'lcs':       0.45,   # LCS on normalized tokens (NiCad core)
+            'winnowing': 0.35,   # Token fingerprinting
+            'ast':       0.20,   # AST structural similarity
+        }
 
         self._default_hybrid_threshold   = hybrid_threshold
         self._default_ml_threshold       = ml_threshold
         self._default_combined_threshold = 0.44
 
         self._load_model()
+
+    def _compute_hybrid_score(self, lcs_score, winnowing_score, ast_score):
+        """Compute weighted hybrid score."""
+        return (
+            lcs_score       * self.WEIGHTS['lcs'] +
+            winnowing_score * self.WEIGHTS['winnowing'] +
+            ast_score       * self.WEIGHTS['ast']
+        )
 
     # ─────────────────────────────────────────────────────────────────────
     # Model loading
@@ -131,21 +154,39 @@ class Type3HybridDetector:
     def _load_model(self) -> None:
         unified_model = self._models_dir / "type3_unified_model.joblib"
         unified_names = self._models_dir / "type3_unified_model.names.json"
+
+        # ── 1. Try unified model ─────────────────────────────────────────
         if unified_model.exists() and unified_names.exists():
             print("✅ [Type3] Loading unified model (BigCloneBench)")
             self.clf           = joblib.load(unified_model)
             self.feature_names = json.loads(unified_names.read_text())
             self.ml_enabled    = True
+            if hasattr(self.clf, "n_jobs"):
+                self.clf.n_jobs = 1
             return
+
+        # ── 2. Promote legacy model → unified ────────────────────────────
         legacy_model = self._models_dir / "type3_rf_features.joblib"
         legacy_names = self._models_dir / "type3_rf_features.names.json"
+
         if legacy_model.exists() and legacy_names.exists():
-            print("⚠️  [Type3] Using legacy model")
+            import shutil as _shutil
+            print("✅ [Type3] Loading model (BigCloneBench RF)")
             self.clf           = joblib.load(legacy_model)
             self.feature_names = json.loads(legacy_names.read_text())
             self.ml_enabled    = True
+            if hasattr(self.clf, "n_jobs"):
+                self.clf.n_jobs = 1
+            try:
+                _shutil.copy2(str(legacy_model), str(unified_model))
+                if not unified_names.exists():
+                    _shutil.copy2(str(legacy_names), str(unified_names))
+                print("✅ [Type3] Model promoted to unified path")
+            except Exception:
+                pass
             return
-        print("⚠️  [Type3] No ML model — heuristics only")
+
+        print("⚠️  [Type3] No ML model found — using heuristics only")
 
     # ─────────────────────────────────────────────────────────────────────
     # Helpers
@@ -216,20 +257,16 @@ class Type3HybridDetector:
         if not frags_a or not frags_b:
             return empty
 
-        best_score   = 0.0
+        best_score    = 0.0
         all_t3_pairs: List[Dict] = []
-        counts = defaultdict(int)
-
-        # Track matched token weight for coverage computation
-        # matched_weight_a[frag_key] = best type3_score × token_count for that frag
-        matched_a: Dict[str, float] = {}
-        matched_b: Dict[str, float] = {}
+        counts        = defaultdict(int)
+        matched_a:    Dict[str, float] = {}
+        matched_b:    Dict[str, float] = {}
 
         for fa in frags_a:
             for fb in frags_b:
                 result = compare_fragments(fa, fb)
 
-                # Discrimination counts
                 if result.clone_type == "type1":
                     counts["type1_pairs"] += 1
                 elif result.clone_type == "type2":
@@ -257,8 +294,6 @@ class Type3HybridDetector:
                     if result.type3_score > best_score:
                         best_score = result.type3_score
 
-                    # Aggregate: track best match weight per fragment
-                    # (a fragment can only be "claimed" once — use best match)
                     key_a = f"{fa.file_path}::{fa.name}::{fa.start_line}"
                     key_b = f"{fb.file_path}::{fb.name}::{fb.start_line}"
                     wa = result.type3_score * fa.token_count
@@ -268,24 +303,11 @@ class Type3HybridDetector:
                     if wb > matched_b.get(key_b, 0):
                         matched_b[key_b] = wb
 
-        # ── Aggregate clone coverage ─────────────────────────────────────
-        # Fraction of each file's tokens that appear in clone pairs.
-        # This is the key new metric: it catches distributed cloning where
-        # many small fragments are copied but each is below the threshold alone.
         total_tokens_a = sum(f.token_count for f in frags_a)
         total_tokens_b = sum(f.token_count for f in frags_b)
+        coverage_a = round(min(sum(matched_a.values()) / max(total_tokens_a, 1), 1.0), 4)
+        coverage_b = round(min(sum(matched_b.values()) / max(total_tokens_b, 1), 1.0), 4)
 
-        coverage_a = (sum(matched_a.values()) / max(total_tokens_a, 1))
-        coverage_b = (sum(matched_b.values()) / max(total_tokens_b, 1))
-        coverage_a = round(min(coverage_a, 1.0), 4)
-        coverage_b = round(min(coverage_b, 1.0), 4)
-
-        # ── Final type3_score ────────────────────────────────────────────
-        # Take the max of:
-        #   (a) best single fragment similarity  (individual pair quality)
-        #   (b) average coverage × 0.85 penalty (aggregate clone extent)
-        # The 0.85 penalty prevents coverage from overriding a genuine
-        # high single-fragment match.
         avg_coverage   = (coverage_a + coverage_b) / 2.0
         coverage_score = round(avg_coverage * 0.85, 4)
         type3_score    = round(max(best_score, coverage_score), 4)
@@ -304,7 +326,6 @@ class Type3HybridDetector:
                 "st3_pairs":   counts["st3_pairs"],
                 "mt3_pairs":   counts["mt3_pairs"],
                 "none_pairs":  counts["none_pairs"],
-                # Legacy keys kept for backward compatibility
                 "type3_pairs_detected": counts["vst3_pairs"] + counts["st3_pairs"] + counts["mt3_pairs"],
                 "type1_pairs_filtered": counts["type1_pairs"],
                 "type2_pairs_filtered": counts["type2_pairs"],
@@ -325,22 +346,18 @@ class Type3HybridDetector:
                 "structural": 0.0, "structural_result": {},
             }
 
-        # Winnowing with boilerplate filter
         fp_a = self.winnowing.get_fingerprint(tokens_a)
         fp_b = self.winnowing.get_fingerprint(tokens_b)
         fp_a = {h for h in fp_a if h not in self.freq_filter.common_hashes}
         fp_b = {h for h in fp_b if h not in self.freq_filter.common_hashes}
         w_score = float(self.winnowing.calculate_similarity(fp_a, fp_b))
 
-        # AST skeleton (keyword sequence)
         a_score = float(self.ast_proc.calculate_similarity(str(file_a), str(file_b)))
 
-        # Expanded complexity metrics
         ma = self.metrics_calc.calculate_file_metrics(str(file_a))
         mb = self.metrics_calc.calculate_file_metrics(str(file_b))
         m_score = float(self.metrics_calc.calculate_similarity(ma, mb))
 
-        # Fragment-level structural analysis (multi-tier)
         structural_result = self._structural_fragment_score(str(file_a), str(file_b))
 
         return {
@@ -455,7 +472,6 @@ class Type3HybridDetector:
         h  = self._hybrid_scores(fa, fb)
         sr = h["structural_result"]
 
-        # Weighted combination (Stage 6)
         raw_hybrid = (
             h["structural"] * 0.40
             + h["winnowing"] * 0.25
@@ -464,10 +480,9 @@ class Type3HybridDetector:
         )
         hybrid_score = raw_hybrid * ext_weight
 
-        # Hybrid discount when ONLY type1/2 fragments (no genuine type3)
-        disc         = sr.get("discrimination", {})
-        t3_found     = disc.get("type3_pairs_detected", 0)
-        any_type12   = (disc.get("type1_pairs", 0) + disc.get("type2_pairs", 0)) > 0
+        disc       = sr.get("discrimination", {})
+        t3_found   = disc.get("type3_pairs_detected", 0)
+        any_type12 = (disc.get("type1_pairs", 0) + disc.get("type2_pairs", 0)) > 0
         if t3_found == 0 and any_type12:
             hybrid_score = hybrid_score * 0.40
 
@@ -486,20 +501,18 @@ class Type3HybridDetector:
             },
         }
 
-        # ML score (Stage 7)
         raw_ml = self._ml_score(fa, fb)
         if raw_ml is not None:
             ml_score = raw_ml * ext_weight
             ml = {
-                "score":    round(ml_score, 4),
-                "is_clone": bool(ml_score >= thresholds["ml"]),
+                "score":          round(ml_score, 4),
+                "is_clone":       bool(ml_score >= thresholds["ml"]),
                 "threshold_used": thresholds["ml"],
             }
         else:
             ml_score = None
             ml       = None
 
-        # Final combined score (Stage 8)
         if ml_score is not None:
             combined_score = hybrid_score * 0.50 + ml_score * 0.50
         else:
@@ -514,14 +527,13 @@ class Type3HybridDetector:
         }
 
         return {
-            "hybrid":              hybrid,
-            "ml":                  ml,
-            "combined":            combined,
-            "is_clone":            combined_is_clone,
-            "language":            language,
-            "extension_weight":    round(ext_weight, 4),
-            "thresholds":          thresholds,
-            # Discrimination and coverage data
+            "hybrid":           hybrid,
+            "ml":               ml,
+            "combined":         combined,
+            "is_clone":         combined_is_clone,
+            "language":         language,
+            "extension_weight": round(ext_weight, 4),
+            "thresholds":       thresholds,
             "clone_type_discrimination": {
                 "type1_pairs_filtered": disc.get("type1_pairs", 0),
                 "type2_pairs_filtered": disc.get("type2_pairs", 0),
@@ -534,7 +546,6 @@ class Type3HybridDetector:
                 "clone_coverage_a":     sr.get("clone_coverage_a",  0.0),
                 "clone_coverage_b":     sr.get("clone_coverage_b",  0.0),
             },
-            # All type3 pairs for CSV export
             "all_type3_pairs": sr.get("all_type3_pairs", []),
         }
 
@@ -553,17 +564,17 @@ class Type3HybridDetector:
                 conf = out["combined"]["confidence"]
                 if out["is_clone"] or conf in ("HIGH", "MEDIUM"):
                     results.append({
-                        "file_a":         all_file_paths[i],
-                        "file_b":         all_file_paths[j],
-                        "is_clone":       out["is_clone"],
-                        "hybrid_score":   out["hybrid"]["score"],
-                        "ml_score":       out["ml"]["score"] if out["ml"] else None,
-                        "combined_score": cs,
-                        "confidence":     conf,
-                        "language":       out["language"],
+                        "file_a":           all_file_paths[i],
+                        "file_b":           all_file_paths[j],
+                        "is_clone":         out["is_clone"],
+                        "hybrid_score":     out["hybrid"]["score"],
+                        "ml_score":         out["ml"]["score"] if out["ml"] else None,
+                        "combined_score":   cs,
+                        "confidence":       conf,
+                        "language":         out["language"],
                         "extension_weight": out["extension_weight"],
-                        "details":        out["hybrid"]["details"],
-                        "all_type3_pairs": out.get("all_type3_pairs", []),
+                        "details":          out["hybrid"]["details"],
+                        "all_type3_pairs":  out.get("all_type3_pairs", []),
                     })
         results.sort(key=lambda x: x["combined_score"], reverse=True)
         return DetectionResultWrapper(results)

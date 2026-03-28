@@ -28,6 +28,7 @@ import JoinCourse from "./pages/courses/JoinCourse";
 // Assignment Pages
 import AssignmentDetail from "./pages/assignments/AssignmentDetail";
 import CreateAssignment from "./pages/assignments/CreateAssignment";
+import EditAssignment from "./pages/assignments/EditAssignment";
 
 // Submission Pages
 import SubmitWork from "./pages/submissions/SubmitWork";
@@ -79,6 +80,9 @@ function AppLayout() {
         {/* Assignments */}
         <Route path="/assignments/create" element={
           <ProtectedRoute allowedRoles={["instructor", "admin"]}><CreateAssignment /></ProtectedRoute>
+        } />
+        <Route path="/assignments/edit/:assignmentId" element={
+          <ProtectedRoute allowedRoles={["instructor", "admin"]}><EditAssignment /></ProtectedRoute>
         } />
         <Route path="/assignments/:assignmentId" element={
           <ProtectedRoute><AssignmentDetail /></ProtectedRoute>

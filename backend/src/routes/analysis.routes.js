@@ -52,5 +52,8 @@ router.get('/report/csv/:jobId', requireAuthenticated, AnalysisController.proxyJ
 // Returns job_id immediately; client polls /zip/results/:jobId for progress.
 router.post('/zip', requireAuthenticated, upload.single('file'), AnalysisController.analyzeClassZip);
 router.get('/zip/results/:jobId', requireAuthenticated, AnalysisController.getZipResults);
+router.post('/zip/chunked', requireAuthenticated, upload.single('file'), AnalysisController.analyzeClassZipChunked);   // ← new line
+
+
 
 module.exports = router;

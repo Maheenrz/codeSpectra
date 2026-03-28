@@ -1,0 +1,45 @@
+    def __init__(
+        self,
+        hybrid_threshold: float = 0.70,
+        ml_threshold:     float = 0.70,
+    ):
+        self.tokenizer    = CodeTokenizer()
+        self.ast_proc     = ASTProcessor()
+        self.metrics_calc = MetricsCalculator()
+        self.winnowing    = WinnowingDetector(k=WINNOWING_K, window_size=4)
+        self.freq_filter  = BatchFrequencyFilter(threshold=0.70)
+
+        self._extractor = FragmentExtractor(min_lines=5, min_tokens=15)
+        self._clusterer = CloneClusterer()
+        self._frag_cache: Dict[str, List[Fragment]] = {}
+
+        self._adapter    = ASTMLAdapter(
+            cache_dir=str(_REPO_ROOT / "analysis-engine" / "feature_cache")
+        )
+
+        # ML model state — set here so the attribute always exists
+        self._models_dir   = _DETECTOR_DIR / "models"
+        self.clf:          Any        = None
+        self.feature_names: List[str] = []
+        self.ml_enabled:   bool       = False
+
+        # Research-based weights (Bellon et al. 2007 — NiCad + Winnowing)
+        self.WEIGHTS = {
+            'lcs':       0.45,   # LCS on normalized tokens (NiCad core)
+            'winnowing': 0.35,   # Token fingerprinting
+            'ast':       0.20,   # AST structural similarity
+        }
+
+        self._default_hybrid_threshold   = hybrid_threshold
+        self._default_ml_threshold       = ml_threshold
+        self._default_combined_threshold = 0.44
+
+        self._load_model()
+
+    def _compute_hybrid_score(self, lcs_score, winnowing_score, ast_score):
+        """Compute weighted hybrid score"""
+        return (
+            lcs_score    * self.WEIGHTS['lcs'] +
+            winnowing_score * self.WEIGHTS['winnowing'] +
+            ast_score    * self.WEIGHTS['ast']
+        )

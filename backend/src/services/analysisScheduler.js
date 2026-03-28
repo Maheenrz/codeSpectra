@@ -1,4 +1,3 @@
-// backend/src/services/analysisScheduler.js
 const cron        = require('node-cron');
 const axios       = require('axios');
 const pool        = require('../config/database');
@@ -6,34 +5,32 @@ const fileCleanup = require('./fileCleanup');
 
 const ANALYSIS_ENGINE_URL = process.env.ANALYSIS_ENGINE_URL || 'http://localhost:5000';
 
-// Max time (ms) to poll a job before giving up for this run
-// (scheduler will pick it up again on next 5-minute tick if still partial)
-const MAX_POLL_MS      = 15 * 60 * 1000;  // 15 minutes
-const POLL_INTERVAL_MS = 10 * 1000;        // 10 seconds
+// How long we'll keep polling a job before giving up for this run.
+// If a job is still running when we time out, the next scheduler tick
+// will pick it up again from the DB since submissions stay 'pending'.
+const MAX_POLL_MS      = 15 * 60 * 1000;  // 15 min
+const POLL_INTERVAL_MS = 10 * 1000;        // 10 sec
 
 class AnalysisScheduler {
   constructor() {
-    // assignmentId → { jobIds: string[], startedAt: Date }
+    // Tracks assignments currently being processed so we don't double-trigger.
+    // Key: assignmentId, Value: { jobIds, startedAt }
     this.runningJobs = new Map();
   }
 
   start() {
     console.log('✅ Analysis Scheduler started');
 
-    // Every 5 minutes: check for assignments past deadline
+    // Check every 5 minutes for assignments past their deadline with pending submissions.
     cron.schedule('*/5 * * * *', async () => {
       await this._checkPendingAnalyses();
     });
 
-    // Daily at 2 AM: delete files older than 7 days
+    // Clean up uploaded files older than 7 days — runs at 2 AM daily.
     cron.schedule('0 2 * * *', async () => {
       await fileCleanup.cleanupOldFiles();
     });
   }
-
-  // ─────────────────────────────────────────────────────────────────────
-  // Scheduler tick
-  // ─────────────────────────────────────────────────────────────────────
 
   async _checkPendingAnalyses() {
     try {
@@ -58,16 +55,11 @@ class AnalysisScheduler {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  // Trigger + poll
-  // ─────────────────────────────────────────────────────────────────────
-
   async _triggerAssignmentAnalysis(assignmentId) {
     console.log(`[Scheduler] Triggering analysis for assignment ${assignmentId}`);
     this.runningJobs.set(assignmentId, { jobIds: [], startedAt: new Date() });
 
     try {
-      // Group submissions by question
       const groups = await this._groupSubmissionsByQuestion(assignmentId);
       const assignmentRow = await pool.query(
         'SELECT primary_language FROM assignments WHERE assignment_id = $1',
@@ -100,14 +92,11 @@ class AnalysisScheduler {
           const jobId = resp.data.job_id;
           this.runningJobs.get(assignmentId).jobIds.push({ jobId, questionId });
           console.log(`[Scheduler] Q${questionId} → job ${jobId}`);
-
-          // Poll this job in the background
           this._pollJob(assignmentId, jobId, questionId);
         } catch (err) {
           console.error(`[Scheduler] Q${questionId} submit error: ${err.message}`);
         }
       }
-
     } catch (err) {
       console.error(`[Scheduler] trigger error for ${assignmentId}: ${err.message}`);
       this.runningJobs.delete(assignmentId);
@@ -119,7 +108,7 @@ class AnalysisScheduler {
 
     const tick = async () => {
       if (Date.now() > deadline) {
-        console.warn(`[Scheduler] job ${jobId} polling timeout — will retry next scheduler tick`);
+        console.warn(`[Scheduler] job ${jobId} timed out — will retry on next scheduler tick`);
         this._maybeCloseAssignment(assignmentId);
         return;
       }
@@ -131,27 +120,21 @@ class AnalysisScheduler {
         );
         const data = resp.data;
 
-        // Save whatever results arrived
         if (data.results && data.results.length > 0) {
           await this._saveResults(assignmentId, questionId, data.results);
         }
 
-        console.log(
-          `[Scheduler] job ${jobId} — ${data.status} `
-          + `(${data.analyzed_count}/${data.total_pairs}, ${data.progress}%)`
-        );
+        console.log(`[Scheduler] job ${jobId} — ${data.status} (${data.analyzed_count}/${data.total_pairs})`);
 
         if (data.status === 'completed' || data.status === 'failed') {
           this._maybeCloseAssignment(assignmentId);
           return;
         }
 
-        // Partial: keep polling
         setTimeout(tick, POLL_INTERVAL_MS);
-
       } catch (err) {
         console.error(`[Scheduler] poll error for job ${jobId}: ${err.message}`);
-        setTimeout(tick, POLL_INTERVAL_MS * 3);  // back off on error
+        setTimeout(tick, POLL_INTERVAL_MS * 3);
       }
     };
 
@@ -159,18 +142,10 @@ class AnalysisScheduler {
   }
 
   _maybeCloseAssignment(assignmentId) {
-    const entry = this.runningJobs.get(assignmentId);
-    if (!entry) return;
-
-    // Only remove from running map — next scheduler tick will re-check
-    // if any submissions are still pending
+    if (!this.runningJobs.has(assignmentId)) return;
     this.runningJobs.delete(assignmentId);
     console.log(`[Scheduler] Assignment ${assignmentId} job cycle complete`);
   }
-
-  // ─────────────────────────────────────────────────────────────────────
-  // Group submissions by question
-  // ─────────────────────────────────────────────────────────────────────
 
   async _groupSubmissionsByQuestion(assignmentId) {
     const query = `
@@ -197,24 +172,14 @@ class AnalysisScheduler {
     return groups;
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  // Save results to DB
-  // ─────────────────────────────────────────────────────────────────────
-
   async _saveResults(assignmentId, questionId, results) {
     for (const r of results) {
-      // r shape from engine:
-      // { student_a_id, submission_a_id, student_b_id, submission_b_id,
-      //   structural_score, semantic_score, combined_score,
-      //   confidence, is_clone, file_a, file_b, details }
-
       if (!r.is_clone && r.confidence === 'UNLIKELY') continue;
 
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
 
-        // Upsert analysis_result for submission_a (highest similarity seen)
         const upsertResult = await client.query(
           `INSERT INTO analysis_results
              (submission_id, overall_similarity, type3_score, type4_score,
@@ -232,22 +197,21 @@ class AnalysisScheduler {
            RETURNING result_id`,
           [
             r.submission_a_id,
-            Math.round((r.combined_score    || 0) * 100),
-            Math.round((r.structural_score  || 0) * 100),
-            Math.round((r.semantic_score    || 0) * 100),
-            Math.round((r.combined_score    || 0) * 100),
+            Math.round((r.combined_score   || 0) * 100),
+            Math.round((r.structural_score || 0) * 100),
+            Math.round((r.semantic_score   || 0) * 100),
+            Math.round((r.combined_score   || 0) * 100),
             JSON.stringify(r.details || {}),
           ]
         );
 
         const resultId = upsertResult.rows[0].result_id;
 
-        // Ensure submission_a_id < submission_b_id for the DB CHECK constraint
+        // The DB has a CHECK that enforces submission_a_id < submission_b_id.
         const [subA, subB] = r.submission_a_id < r.submission_b_id
           ? [r.submission_a_id, r.submission_b_id]
           : [r.submission_b_id, r.submission_a_id];
 
-        // Upsert clone_pair
         await client.query(
           `INSERT INTO clone_pairs
              (result_id, submission_a_id, submission_b_id,
@@ -255,9 +219,7 @@ class AnalysisScheduler {
            VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT DO NOTHING`,
           [
-            resultId,
-            subA,
-            subB,
+            resultId, subA, subB,
             Math.round((r.combined_score || 0) * 100),
             r.confidence === 'HIGH' ? 'type3' : 'hybrid',
             JSON.stringify({
@@ -272,7 +234,6 @@ class AnalysisScheduler {
           ]
         );
 
-        // Mark submission as completed
         await client.query(
           `UPDATE submissions SET analysis_status = 'completed', analyzed_at = NOW()
            WHERE submission_id = $1`,

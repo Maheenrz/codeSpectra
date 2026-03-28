@@ -7,6 +7,17 @@ const inputClass = `w-full px-4 py-3 rounded-xl border border-[#E8E1D8] bg-[#F7F
   text-sm text-[#1A1714] placeholder-[#A8A29E]
   focus:outline-none focus:ring-2 focus:ring-[#CF7249] focus:border-transparent transition-all`;
 
+// Minimalist hand-pointing vector for decoration
+const HandVector = () => (
+  <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg" className="opacity-30">
+    <path d="M28 48V26a3 3 0 016 0v12" stroke="#CF7249" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M34 32a3 3 0 016 0v8" stroke="#CF7249" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M40 34a3 3 0 016 0v6" stroke="#CF7249" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M28 44c0 0-4-2-4-6v-6a3 3 0 016 0" stroke="#CF7249" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M46 40v4c0 6-4 10-10 10h-2c-4 0-7-2-9-5" stroke="#CF7249" strokeWidth="2" strokeLinecap="round"/>
+  </svg>
+);
+
 const CreateCourse = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -23,8 +34,16 @@ const CreateCourse = () => {
     e.preventDefault();
     setError(''); setLoading(true);
     try {
-      const course = await courseService.createCourse(formData);
-      navigate(`/courses/${course.course.course_id}`);
+      const result = await courseService.createCourse(formData);
+      // Handle any response shape: { course: {...} } / { data: {...} } / direct object
+      const created = result?.course ?? result?.data ?? result;
+      const newId   = created?.course_id ?? created?.id;
+      if (newId) {
+        navigate(`/courses/${newId}`);
+      } else {
+        // Fallback — go to courses list if ID can't be parsed
+        navigate('/courses');
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create course');
     } finally { setLoading(false); }
@@ -37,10 +56,13 @@ const CreateCourse = () => {
           ← Back to Courses
         </Link>
 
-        <div className="mb-8">
-          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#CF7249] mb-1">Instructor</p>
-          <h1 className="text-3xl font-bold text-[#1A1714]">Create a Course</h1>
-          <p className="text-sm text-[#6B6560] mt-1">A join code will be generated automatically for students.</p>
+        <div className="mb-8 flex items-start justify-between">
+          <div>
+            <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#CF7249] mb-1">Instructor</p>
+            <h1 className="text-3xl font-bold text-[#1A1714]">Create a Course</h1>
+            <p className="text-sm text-[#6B6560] mt-1">A join code will be generated automatically for students.</p>
+          </div>
+          <HandVector />
         </div>
 
         <div className="bg-white rounded-2xl border border-[#E8E1D8] p-8">

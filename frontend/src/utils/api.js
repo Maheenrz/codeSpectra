@@ -6,24 +6,21 @@ const API_BASE_URL = import.meta.env.VITE_API_URL
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
 });
 
-// Request interceptor — attach JWT token
+// Attach the JWT token on every request if one is stored.
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
+    if (token) config.headers.Authorization = `Bearer ${token}`;
     return config;
   },
   (error) => Promise.reject(error)
 );
 
-// Response interceptor — handle 401 globally
+// If the server returns 401, the token is expired or invalid.
+// Clear local storage and redirect to login.
 api.interceptors.response.use(
   (response) => response,
   (error) => {

@@ -1,9 +1,3 @@
-// backend/src/controllers/analysis.controller.js
-// ── FIXED v2.1 ──
-//   1. getPairDetail: Fixed double-multiplication on type scores
-//   2. getPairDetail: Added primary_clone_type from matchingBlocks
-//   3. getPairDetail: Null-safe access to meta fields
-
 const path    = require('path');
 const fs      = require('fs');
 const axios   = require('axios');
@@ -11,9 +5,11 @@ const pool    = require('../config/database');
 const { Submission, AnalysisResult, ClonePair } = require('../models');
 const AnalysisService = require('../services/analysisService');
 
-const ANALYSIS_ENGINE_URL = process.env.ANALYSIS_ENGINE_URL || 'http://localhost:8000';
+const ANALYSIS_ENGINE_URL = process.env.ANALYSIS_ENGINE_URL || 'http://localhost:5000';
 
-// /app/uploads/foo/bar.cpp  →  /Users/.../backend/uploads/foo/bar.cpp
+// When the engine runs in Docker its file paths start with /app/uploads/...
+// but the backend expects paths relative to its own uploads directory.
+// This translates an engine path back to a host path so we can read files.
 const toHostPath = (enginePath) => {
   if (!enginePath) return null;
   const uploadsDir = path.join(__dirname, '../../uploads');
@@ -23,15 +19,11 @@ const toHostPath = (enginePath) => {
 
 class AnalysisController {
 
-  // ── Generic file upload analysis ──────────────────────────────────────────
-  // Accepts any mix of .cpp/.java/.py/.js/.ts + .zip files.
-  // ZIPs are extracted in-process (adm-zip) before forwarding to the engine.
-  // Result is normalised so the frontend always gets a consistent shape.
-  // The `types` form field (JSON) controls which clone types are returned.
+  // Accepts any mix of code files and ZIPs from the generic "Code Analysis" page.
+  // ZIPs are extracted before being forwarded to the engine so the engine always
+  // receives flat code files. The `types` form field controls which clone types
+  // come back (instructor can toggle Type-1 through Type-4 on the UI).
   static async analyzeFiles(req, res) {
-    // Parse the detection-type toggles sent by the frontend
-    // { t1: bool, t2: bool, t3: bool, t4: bool }
-    // Map to canonical type names so we can filter the engine's results.
     let enabledTypes = { type1: true, type2: true, type3: true, type4: false };
     try {
       const raw = req.body?.types ? JSON.parse(req.body.types) : {};
@@ -41,13 +33,13 @@ class AnalysisController {
         type3: raw.t3 !== false,
         type4: raw.t4 !== false,
       };
-    } catch (_) { /* use defaults */ }
-    const uploadedPaths = [];
+    } catch (_) { /* keep defaults */ }
+
+    const uploadedPaths  = [];
     const extractedPaths = [];
     const tempDir = path.join(__dirname, '../../uploads/temp');
 
     try {
-      // Ensure temp dir exists
       if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
       if (!req.files || req.files.length === 0)
@@ -55,28 +47,23 @@ class AnalysisController {
 
       req.files.forEach(f => uploadedPaths.push(f.path));
 
-      // ── Extract any ZIPs ─────────────────────────────────────────────
-      const AdmZip  = require('adm-zip');
+      const AdmZip   = require('adm-zip');
       const CODE_EXT = new Set(['.cpp','.c','.h','.hpp','.cc','.cxx','.java','.py','.js','.jsx','.ts','.tsx']);
       const allCodePaths = [];
 
       for (const f of req.files) {
         const ext = path.extname(f.originalname).toLowerCase();
         if (ext === '.zip') {
-          // Extract into a sub-folder alongside the zip
           const extractDir = f.path + '_extracted';
           fs.mkdirSync(extractDir, { recursive: true });
           extractedPaths.push(extractDir);
+
           try {
             const zip = new AdmZip(f.path);
             zip.extractAllTo(extractDir, true);
 
-            // Walk extracted files — recursively extract nested ZIPs too.
-            // This handles the "class ZIP" pattern:
-            //   class.zip
-            //   ├── student1.zip   ← extracted here
-            //   ├── student2.zip
-            //   └── student3/      ← or plain folders
+            // Walk extracted content, recursively handling nested student ZIPs.
+            // Supports the common pattern where a class ZIP contains one ZIP per student.
             const walk = (dir) => {
               for (const entry of fs.readdirSync(dir)) {
                 const full = path.join(dir, entry);
@@ -84,16 +71,15 @@ class AnalysisController {
                 if (stat.isDirectory()) {
                   walk(full);
                 } else if (path.extname(entry).toLowerCase() === '.zip') {
-                  // Nested student ZIP — extract it in place
                   const nestedDir = full + '_nested';
                   fs.mkdirSync(nestedDir, { recursive: true });
                   extractedPaths.push(nestedDir);
                   try {
                     const nestedZip = new AdmZip(full);
                     nestedZip.extractAllTo(nestedDir, true);
-                    walk(nestedDir);   // collect code files from student's zip
+                    walk(nestedDir);
                   } catch (nestedErr) {
-                    console.warn(`[Analysis] Nested ZIP extraction failed for ${entry}: ${nestedErr.message}`);
+                    console.warn(`[Analysis] Nested ZIP failed for ${entry}: ${nestedErr.message}`);
                   }
                 } else if (CODE_EXT.has(path.extname(entry).toLowerCase())) {
                   allCodePaths.push(full);
@@ -112,7 +98,6 @@ class AnalysisController {
       if (allCodePaths.length < 2)
         return res.status(400).json({ error: 'At least 2 code files required (after ZIP extraction)' });
 
-      // ── Forward code files to the engine ─────────────────────────────
       const FormData = require('form-data');
       const form = new FormData();
       allCodePaths.forEach(p => {
@@ -125,48 +110,70 @@ class AnalysisController {
         { headers: form.getHeaders(), timeout: 300_000 }
       );
 
-      // ── Filter by enabled detection types ─────────────────────────────
-      // Engine returns all_pairs with primary_clone_type on each pair.
-      // Only return pairs whose clone type was enabled by the user's toggles.
       const engineData = response.data;
+
+      // Filter results to only the clone types the user enabled,
+      // then recompute the stats so UI numbers stay accurate.
       if (engineData.all_pairs && Array.isArray(engineData.all_pairs)) {
         engineData.all_pairs = engineData.all_pairs.filter(pair => {
           const ct = pair.primary_clone_type || 'none';
-          if (ct === 'none') return false;
+          if (ct === 'none')                         return false;
           if (ct === 'type1' && !enabledTypes.type1) return false;
           if (ct === 'type2' && !enabledTypes.type2) return false;
           if (ct === 'type3' && !enabledTypes.type3) return false;
           if (ct === 'type4' && !enabledTypes.type4) return false;
           return true;
         });
-        // Re-compute statistics over filtered pairs so the frontend
-        // stats cards (Total Pairs, Critical, High, Avg) are accurate.
-        const fp = engineData.all_pairs;
         if (engineData.statistics) {
-          const scoreOf = p => p.combined_score ?? p.structural_score ?? 0;
-          engineData.statistics.total_pairs_after_filter = fp.length;
+          engineData.statistics.total_pairs_after_filter = engineData.all_pairs.length;
           engineData.statistics.enabled_types = enabledTypes;
         }
       }
+
       return res.json(engineData);
 
     } catch (error) {
       if (error.response)
         return res.status(error.response.status).json(error.response.data || { error: 'Engine error' });
       if (error.code === 'ECONNREFUSED')
-        return res.status(503).json({ error: 'Analysis engine not running. Make sure Docker containers are up.' });
+        return res.status(503).json({ error: 'Analysis engine not running. Start the Docker containers.' });
       return res.status(500).json({ error: 'File analysis failed', details: error.message });
     } finally {
-      // Clean up all uploaded files
       uploadedPaths.forEach(p => { try { fs.unlinkSync(p); } catch (_) {} });
-      // Clean up extracted ZIP directories
-      extractedPaths.forEach(dir => {
-        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
-      });
+      extractedPaths.forEach(dir => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} });
     }
   }
 
-  // ── Single submission ────────────────────��────────────────────────────────
+  static async analyzeClassZipChunked(req, res) {
+    const uploadedPath = req.file?.path;
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No ZIP file uploaded' });
+      if (!req.file.originalname.toLowerCase().endsWith('.zip'))
+        return res.status(400).json({ error: 'Only .zip files accepted on this endpoint' });
+
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('file', fs.createReadStream(uploadedPath), req.file.originalname);
+
+      // Forward to the engine's chunked endpoint with a sensible chunk size
+      const response = await axios.post(
+        `${ANALYSIS_ENGINE_URL}/api/analyze/zip/chunked?chunk_size=30`,
+        form,
+        { headers: form.getHeaders(), timeout: 60000 }   // 60 seconds for the upload
+      );
+
+      return res.json(response.data);   // contains job_id
+    } catch (error) {
+      console.error('[analyzeClassZipChunked]', error.message);
+      if (error.code === 'ECONNREFUSED')
+        return res.status(503).json({ error: 'Analysis engine not running' });
+      const detail = error.response?.data || error.message;
+      return res.status(500).json({ error: 'Class ZIP analysis failed', details: detail });
+    } finally {
+      if (uploadedPath) { try { fs.unlinkSync(uploadedPath); } catch (_) {} }
+    }
+  }
+
   static async analyzeSubmission(req, res) {
     try {
       const { submissionId } = req.params;
@@ -181,7 +188,8 @@ class AnalysisController {
     }
   }
 
-  // ── Batch assignment — fire and forget, lock inside service ──────────────
+  // Kicks off analysis in the background and returns immediately.
+  // The lock inside AnalysisService prevents duplicate runs.
   static async analyzeAssignment(req, res) {
     try {
       const { assignmentId } = req.params;
@@ -193,15 +201,13 @@ class AnalysisController {
     }
   }
 
-  // ── Assignment results ────────────────────────────────────────────────────
   static async getAssignmentResults(req, res) {
     try {
       const { assignmentId } = req.params;
       const threshold = parseFloat(req.query.threshold) || 50;
       const results   = await AnalysisResult.findByAssignment(assignmentId);
       const highSimilarityPairs = await ClonePair.findByAssignment(assignmentId, threshold);
-      // Return detection settings so the frontend can display which
-      // types were enabled when analysis was run for this assignment.
+
       let assignment_settings = null;
       try {
         const { rows: [asgn] } = await pool.query(
@@ -228,7 +234,6 @@ class AnalysisController {
     }
   }
 
-  // ── Single submission results ─────────────────────────────────────────────
   static async getSubmissionResults(req, res) {
     try {
       const { submissionId } = req.params;
@@ -241,7 +246,7 @@ class AnalysisController {
     }
   }
 
-  // ── GET /api/analysis/pair/:pairId — full detail WITH file content ────────
+  // Returns full pair detail including file source content for the diff view.
   static async getPairDetail(req, res) {
     try {
       const { pairId } = req.params;
@@ -271,7 +276,6 @@ class AnalysisController {
           : (pair.matching_blocks || {});
       } catch (_) {}
 
-      // Read actual source files from disk
       const readFile = (enginePath) => {
         try {
           const hostPath = toHostPath(enginePath);
@@ -283,43 +287,32 @@ class AnalysisController {
       const sourceA = readFile(meta.file_a);
       const sourceB = readFile(meta.file_b);
 
-      // Build fragments
       let fragments = [];
       if (meta.fragments && Array.isArray(meta.fragments) && meta.fragments.length > 0) {
         fragments = meta.fragments;
       } else if (sourceA !== null || sourceB !== null) {
+        // No fragment data from the engine — fall back to showing the whole files.
         fragments = [{
-          file_a:       meta.file_a ? path.basename(meta.file_a) : 'File A',
-          file_b:       meta.file_b ? path.basename(meta.file_b) : 'File B',
-          func_a:       null,
-          func_b:       null,
-          start_a:      1,
-          end_a:        sourceA ? sourceA.split('\n').length : 0,
-          start_b:      1,
-          end_b:        sourceB ? sourceB.split('\n').length : 0,
-          source_a:     sourceA || '// File not found',
-          source_b:     sourceB || '// File not found',
-          similarity:   pair.similarity / 100,
+          file_a:        meta.file_a ? path.basename(meta.file_a) : 'File A',
+          file_b:        meta.file_b ? path.basename(meta.file_b) : 'File B',
+          func_a:        null,
+          func_b:        null,
+          start_a:       1,
+          end_a:         sourceA ? sourceA.split('\n').length : 0,
+          start_b:       1,
+          end_b:         sourceB ? sourceB.split('\n').length : 0,
+          source_a:      sourceA || '// File not found',
+          source_b:      sourceB || '// File not found',
+          similarity:    pair.similarity / 100,
           similar_lines: [],
         }];
       }
 
-      // ── FIX #1: Normalise scores correctly ──────────────────────────────
-      // DB stores similarity as 0-100 (percentage).
-      // meta stores scores as 0.0-1.0 (floats from engine).
-      // Frontend expects 0.0-1.0.
-      //
-      // OLD BUG: n(meta.type1_score * 100) → double-converted!
-      //   meta.type1_score is already 0.0-1.0
-      //   Multiplying by 100 then dividing by 100 = same value BUT
-      //   n() does toFixed(4) which truncates precision
-      //
-      // WORSE: if meta.type1_score is undefined, undefined * 100 = NaN
-      //
-      // NEW: Read directly from meta (already 0-1), with safe fallback
+      // The DB stores similarity as 0-100 (integer percentage).
+      // The meta object stores scores as 0.0-1.0 floats from the engine.
+      // The frontend always expects 0.0-1.0, so we normalise here.
       const safeScore = (v) => {
         if (v == null || isNaN(v)) return 0;
-        // If the value is > 1, it's stored as percentage, convert to 0-1
         if (v > 1) return parseFloat((v / 100).toFixed(4));
         return parseFloat(v.toFixed(4));
       };
@@ -328,7 +321,7 @@ class AnalysisController {
         pair_id:            pair.pair_id,
         similarity:         parseFloat((pair.similarity / 100).toFixed(4)),
         clone_type:         pair.clone_type,
-        primary_clone_type: meta.primary_clone_type || pair.clone_type,  // ← NEW
+        primary_clone_type: meta.primary_clone_type || pair.clone_type,
         detected_at:        pair.detected_at,
         submission_a_id:    pair.submission_a_id,
         submission_b_id:    pair.submission_b_id,
@@ -336,10 +329,10 @@ class AnalysisController {
         student_b_name:     pair.student_b_name,
         student_a_id:       pair.student_a_id,
         student_b_id:       pair.student_b_id,
-        type1_score:        safeScore(meta.type1_score),       // ← FIXED
-        type2_score:        safeScore(meta.type2_score),       // ← FIXED
-        structural_score:   safeScore(meta.structural_score),  // ← FIXED
-        semantic_score:     safeScore(meta.semantic_score),    // ← FIXED
+        type1_score:        safeScore(meta.type1_score),
+        type2_score:        safeScore(meta.type2_score),
+        structural_score:   safeScore(meta.structural_score),
+        semantic_score:     safeScore(meta.semantic_score),
         confidence:         meta.confidence ?? 'UNKNOWN',
         file_a:             meta.file_a ? path.basename(meta.file_a) : null,
         file_b:             meta.file_b ? path.basename(meta.file_b) : null,
@@ -353,7 +346,6 @@ class AnalysisController {
     }
   }
 
-  // ── Health check ──────────────────────────────────────────────────────────
   static async checkHealth(req, res) {
     try {
       const health = await AnalysisService.checkHealth();
@@ -363,12 +355,11 @@ class AnalysisController {
     }
   }
 
-  // ── CSV report: upload files → engine runs analysis + generates report ────
-  // Proxies to POST /api/report/csv on the Python engine.
-  // Extracts ZIPs (same as analyzeFiles), then streams the CSV back.
+  // Uploads files, extracts any ZIPs, then proxies to the engine's CSV report endpoint.
+  // Streams the response directly back to the client.
   static async proxyReportCsv(req, res) {
-    const uploadedPaths  = [];
-    const extractedDirs  = [];
+    const uploadedPaths = [];
+    const extractedDirs = [];
     const tempDir = path.join(__dirname, '../../uploads/temp');
 
     try {
@@ -378,7 +369,6 @@ class AnalysisController {
 
       req.files.forEach(f => uploadedPaths.push(f.path));
 
-      // ── Extract ZIPs (same logic as analyzeFiles) ───────────────────
       const AdmZip   = require('adm-zip');
       const CODE_EXT = new Set(['.cpp','.c','.h','.hpp','.cc','.cxx','.java','.py','.js','.jsx','.ts','.tsx']);
       const allCodePaths = [];
@@ -411,7 +401,6 @@ class AnalysisController {
       if (allCodePaths.length < 2)
         return res.status(400).json({ error: 'At least 2 code files required for CSV report' });
 
-      // ── Forward to engine /api/report/csv ─────────────────────────
       const { assignment_id = '', language = 'cpp', detailed = 'true' } = req.query;
       const FormData = require('form-data');
       const form = new FormData();
@@ -439,7 +428,6 @@ class AnalysisController {
     }
   }
 
-  // ── CSV from a completed async assignment job ──────────────────────
   static async proxyJobCsv(req, res) {
     try {
       const { jobId } = req.params;
@@ -455,11 +443,9 @@ class AnalysisController {
     }
   }
 
-  // ── Class ZIP: upload zip → engine kicks off async job → return job_id ──
-  // The engine's /api/analyze/zip endpoint handles:
-  //   - class.zip → {student1.zip, student2.zip, ...}  (Structure A)
-  //   - class.zip → {student1/, student2/, ...}         (Structure B)
-  //   - project.zip (flat files)                          (Structure C)
+  // Proxies a class ZIP directly to the engine's async ZIP endpoint.
+  // The engine handles all the student sub-ZIP extraction internally
+  // and returns a job_id to poll for results.
   static async analyzeClassZip(req, res) {
     const uploadedPath = req.file?.path;
     try {
@@ -467,7 +453,6 @@ class AnalysisController {
       if (!req.file.originalname.toLowerCase().endsWith('.zip'))
         return res.status(400).json({ error: 'Only .zip files accepted on this endpoint' });
 
-      // Proxy the zip directly to the engine
       const FormData = require('form-data');
       const form = new FormData();
       form.append('file', fs.createReadStream(uploadedPath), req.file.originalname);
@@ -475,7 +460,7 @@ class AnalysisController {
       const response = await axios.post(
         `${ANALYSIS_ENGINE_URL}/api/analyze/zip`,
         form,
-        { headers: form.getHeaders(), timeout: 60_000 },
+        { headers: form.getHeaders(), timeout: 60_000 }
       );
 
       return res.json(response.data);
@@ -490,13 +475,12 @@ class AnalysisController {
     }
   }
 
-  // ── Poll class ZIP job results from the engine ————————————————
   static async getZipResults(req, res) {
     try {
       const { jobId } = req.params;
       const response = await axios.get(
         `${ANALYSIS_ENGINE_URL}/api/analyze/results/${jobId}`,
-        { timeout: 10_000 },
+        { timeout: 10_000 }
       );
       return res.json(response.data);
     } catch (error) {

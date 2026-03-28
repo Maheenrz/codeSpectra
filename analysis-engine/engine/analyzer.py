@@ -21,6 +21,13 @@ from pathlib import Path
 from dataclasses import dataclass, field
 import time
 import sys
+import math
+import gc
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -34,7 +41,7 @@ class AnalyzerConfig:
     structural_threshold: float = 0.50
     structural_high: float = 0.70
     ml_threshold: float = 0.60
-    semantic_threshold: float = 0.60   # educational pipeline calibrated threshold
+    semantic_threshold: float = 0.60
     semantic_high: float = 0.80
     class_high_similarity_threshold: float = 0.70
     simple_problem_ratio: float = 0.70
@@ -74,7 +81,7 @@ class StructuralResult:
     confidence: str
     details: Optional[StructuralDetails] = None
     discrimination: Optional[Dict] = None
-    all_type3_pairs: Optional[List] = None  # fragment pairs with source code
+    all_type3_pairs: Optional[List] = None
 
 
 @dataclass
@@ -83,10 +90,9 @@ class SemanticResult:
     is_similar: bool
     confidence: str
     details: Optional[SemanticDetails] = None
-    # Educational Type-4 enrichment fields — forwarded to frontend as-is
-    io_match_score:  Optional[float] = None   # 0.0–1.0, or None if I/O testing did not run
-    io_available:    bool            = False   # True when I/O tester produced results
-    interpretation:  str             = ""      # human-readable score explanation
+    io_match_score: Optional[float] = None
+    io_available: bool = False
+    interpretation: str = ""
 
 
 @dataclass
@@ -163,33 +169,152 @@ class CloneAnalyzer:
         from detectors.type2.type2_detector import Type2Detector
         from detectors.type3.hybrid_detector import Type3HybridDetector
 
-        self._type1      = Type1Detector()
-        self._type2      = Type2Detector()
+        self._type1 = Type1Detector()
+        self._type2 = Type2Detector()
         self._structural = Type3HybridDetector(
             hybrid_threshold=self.config.structural_threshold,
             ml_threshold=self.config.ml_threshold,
         )
 
         # ── Type-4: Educational Pipeline ─────────────────────────────────
-        # Initialized lazily — loading the educational module triggers
-        # classifier warm-up but NOT compilation or Docker.  Docker/g++ are
-        # only invoked at detect() time when a pair actually needs T4 testing.
         try:
             from detectors.type4.type4_detector import Type4Detector
             self._semantic = Type4Detector(threshold=self.config.semantic_threshold)
-            print(
-                f"✅ [Analyzer] Type-4 backend: "
-                f"{self._semantic.get_mode()}"
-            )
+            print(f"✅ [Analyzer] Type-4 backend: {self._semantic.get_mode()}")
         except Exception as exc:
             print(f"⚠️  [Analyzer] Type-4 init failed ({exc}) — semantic detection disabled")
             self._semantic = None
 
     # =========================================================================
-    # PUBLIC API
+    # SMART BATCHING METHODS
     # =========================================================================
 
-    def analyze(self, file_paths: List[str], detailed: bool = False) -> Dict[str, Any]:
+    def analyze_with_smart_batching(self, file_paths: List[str], detailed: bool = False) -> Dict[str, Any]:
+        start_time = time.time()
+        n = len(file_paths)
+        
+        try:
+            if psutil:
+                available_memory = psutil.virtual_memory().available / (1024 * 1024 * 1024)
+                if available_memory < 2:
+                    batch_size = 20
+                elif available_memory < 4:
+                    batch_size = 30
+                else:
+                    batch_size = 50
+            else:
+                batch_size = 30
+        except:
+            batch_size = 30
+        
+        num_batches = math.ceil(n / batch_size)
+        total_pairs = n * (n - 1) // 2
+        print(f"📊 Smart batching: {n} files → {num_batches} batches of ~{batch_size} files")
+        print(f"📊 Total pairs to process: {total_pairs}")
+        
+        if n <= batch_size:
+            return self._analyze_original(file_paths, detailed)
+        
+        all_pairs_results = []
+        all_clone_classes = []
+        all_fragment_pairs = []
+        
+        for batch_idx in range(num_batches):
+            batch_start = batch_idx * batch_size
+            batch_end = min(batch_start + batch_size, n)
+            batch_files = file_paths[batch_start:batch_end]
+            
+            print(f"🔄 Processing batch {batch_idx + 1}/{num_batches}: {len(batch_files)} files")
+            
+            batch_result = self._analyze_batch(batch_files, detailed)
+            
+            if 'all_pairs' in batch_result:
+                all_pairs_results.extend(batch_result.get('all_pairs', []))
+            if 'clone_classes' in batch_result:
+                all_clone_classes.extend(batch_result.get('clone_classes', []))
+            if 'all_fragment_pairs' in batch_result:
+                all_fragment_pairs.extend(batch_result.get('all_fragment_pairs', []))
+            
+            gc.collect()
+            print(f"✅ Batch {batch_idx + 1} complete. Found {len(batch_result.get('all_pairs', []))} clone pairs")
+        
+        processing_time = (time.time() - start_time) * 1000
+        
+        return {
+            "metadata": {
+                "total_files": n,
+                "total_comparisons": total_pairs,
+                "processing_time_ms": round(processing_time, 2),
+                "analysis_mode": "batched",
+                "batches_processed": num_batches,
+            },
+            "class_analysis": {
+                "is_simple_problem": False,
+                "high_similarity_ratio": 0,
+                "average_structural_similarity": 0,
+                "message": f"Processed {n} files in {num_batches} batches",
+                "outlier_pairs": [],
+            },
+            "statistics": {
+                "structural": {"high": 0, "medium": 0, "low": 0, "similar_count": len(all_pairs_results)},
+                "clone_types": {"type1": 0, "type2": 0, "type3": len(all_pairs_results), "type4": 0, "none": 0},
+                "overall": {"high_similarity": 0, "medium_similarity": len(all_pairs_results), "needs_review": 0},
+            },
+            "pairs_needing_review": [],
+            "all_pairs": all_pairs_results,
+            "clone_classes": all_clone_classes,
+        }
+
+    def _analyze_batch(self, file_paths: List[str], detailed: bool) -> Dict:
+        n = len(file_paths)
+        if n < 2:
+            return {"all_pairs": [], "clone_classes": [], "file_pair_scores": {}}
+        
+        self._structural.prepare_batch([Path(p) for p in file_paths])
+        
+        all_fragment_pairs = []
+        file_pair_scores = {}
+        pair_results = []
+        
+        for i in range(n):
+            for j in range(i + 1, n):
+                try:
+                    result = self._analyze_pair(file_paths[i], file_paths[j], include_details=detailed)
+                    pair_results.append(result)
+                    
+                    if hasattr(result.structural, 'all_type3_pairs') and result.structural.all_type3_pairs:
+                        for fp in result.structural.all_type3_pairs:
+                            all_fragment_pairs.append({
+                                "frag_a": fp.get("frag_a"),
+                                "frag_b": fp.get("frag_b"),
+                                "similarity": fp.get("similarity", 0),
+                            })
+                    
+                    file_pair_scores[(i, j)] = max(result.structural.score, result.semantic.score)
+                    
+                except Exception as e:
+                    print(f"⚠️ Error analyzing pair ({i},{j}): {e}")
+                    continue
+        
+        clone_classes = []
+        if all_fragment_pairs:
+            try:
+                clone_classes = self._structural.clusterer.cluster(
+                    all_fragment_pairs, min_similarity=self.config.structural_threshold
+                )
+            except Exception as e:
+                print(f"⚠️ Error clustering: {e}")
+        
+        all_pairs = [self._pair_to_dict(p, detailed) for p in pair_results]
+        
+        return {
+            "all_pairs": all_pairs,
+            "clone_classes": clone_classes,
+            "file_pair_scores": file_pair_scores,
+            "all_fragment_pairs": all_fragment_pairs
+        }
+
+    def _analyze_original(self, file_paths: List[str], detailed: bool = False) -> Dict[str, Any]:
         start_time = time.time()
         n = len(file_paths)
         same_lang_pairs = build_same_language_pairs(file_paths)
@@ -205,8 +330,8 @@ class CloneAnalyzer:
             pairs.append(pair)
 
         class_analysis = self._analyze_class(pairs)
-        stats          = self._calculate_stats(pairs)
-        review_pairs   = self._get_review_pairs(pairs, class_analysis)
+        stats = self._calculate_stats(pairs)
+        review_pairs = self._get_review_pairs(pairs, class_analysis)
 
         pairs.sort(key=lambda x: x.structural.score, reverse=True)
 
@@ -222,30 +347,34 @@ class CloneAnalyzer:
             detailed=detailed,
         )
 
-    def analyze_for_assignment(
-        self,
-        student_submissions: List[Dict],
-        language: str = "cpp",
-        extension_weights: Dict[str, float] = None,
-        pair_timeout_seconds: int = 30,
-        skip_pairs: set = None,
-    ) -> Dict[str, Any]:
-        """
-        v2.3+ — Cross-student ALL-vs-ALL analysis.
-        Gate: effective_score = max(t1, t2, t3) >= 0.25
-        """
+    # =========================================================================
+    # PUBLIC API
+    # =========================================================================
+
+    def analyze(self, file_paths: List[str], detailed: bool = False) -> Dict[str, Any]:
+        n = len(file_paths)
+        total_pairs = n * (n - 1) // 2
+        
+        if n > 50 or total_pairs > 2000:
+            print(f"⚠️ Large file set detected: {n} files, {total_pairs} pairs")
+            print(f"🔄 Using smart batching to prevent overload")
+            return self.analyze_with_smart_batching(file_paths, detailed)
+        
+        return self._analyze_original(file_paths, detailed)
+
+    def analyze_for_assignment(self, student_submissions: List[Dict], language: str = "cpp",
+                                extension_weights: Dict[str, float] = None, pair_timeout_seconds: int = 30,
+                                skip_pairs: set = None, enable_type1: bool = True,
+                                enable_type2: bool = True, enable_type3: bool = True,
+                                enable_type4: bool = True) -> Dict[str, Any]:
         skip_pairs = skip_pairs or set()
         n = len(student_submissions)
-
         all_files = []
         for sub in student_submissions:
             all_files.extend(sub.get("files", []))
-
         self._structural.prepare_batch([Path(p) for p in all_files])
-
         clone_pairs = []
         remaining_pairs = []
-
         for i in range(n):
             for j in range(i + 1, n):
                 if (i, j) in skip_pairs:
@@ -259,42 +388,26 @@ class CloneAnalyzer:
                                 continue
                             if _get_lang(fa) != _get_lang(fb):
                                 continue
-                            pair = self._analyze_pair(fa, fb, include_details=False)
-                            t1 = pair.type1_score
-                            t2 = pair.type2_score
-                            t3 = pair.structural.score
-                            t4 = pair.semantic.score
-                            # Include T4 in effective_score so semantic clones
-                            # surface even when T1/T2/T3 are all low
+                            pair = self._analyze_pair(fa, fb, include_details=False,
+                                                      enable_type1=enable_type1, enable_type2=enable_type2,
+                                                      enable_type3=enable_type3, enable_type4=enable_type4)
+                            t1, t2, t3, t4 = pair.type1_score, pair.type2_score, pair.structural.score, pair.semantic.score
                             effective_score = max(t1, t2, t3, t4)
                             if effective_score < 0.25:
                                 continue
                             clone_pairs.append({
-                                "student_a_id":      sub_a.get("student_id"),
-                                "student_b_id":      sub_b.get("student_id"),
-                                "submission_a_id":   sub_a.get("submission_id"),
-                                "submission_b_id":   sub_b.get("submission_id"),
-                                "file_a":            pair.file_a,
-                                "file_b":            pair.file_b,
-                                "type1_score":       t1,
-                                "type2_score":       t2,
-                                "structural_score":  t3,
-                                "semantic_score":    t4,
-                                "effective_score":   round(effective_score, 4),
-                                "primary_clone_type": pair.primary_clone_type,
-                                "similarity_level":  pair.similarity_level,
-                                "needs_review":      pair.needs_review,
-                                "summary":           pair.summary,
+                                "student_a_id": sub_a.get("student_id"), "student_b_id": sub_b.get("student_id"),
+                                "submission_a_id": sub_a.get("submission_id"), "submission_b_id": sub_b.get("submission_id"),
+                                "file_a": pair.file_a, "file_b": pair.file_b,
+                                "type1_score": t1, "type2_score": t2, "structural_score": t3, "semantic_score": t4,
+                                "effective_score": round(effective_score, 4),
+                                "primary_clone_type": pair.primary_clone_type, "similarity_level": pair.similarity_level,
+                                "needs_review": pair.needs_review, "summary": pair.summary,
                             })
                 except Exception as e:
                     print(f"⚠️ Pair ({i},{j}) error: {e}")
                     remaining_pairs.append([i, j])
-
-        return {
-            "clone_pairs":     clone_pairs,
-            "remaining_pairs": remaining_pairs,
-            "class_analysis":  {},
-        }
+        return {"clone_pairs": clone_pairs, "remaining_pairs": remaining_pairs, "class_analysis": {}}
 
     def get_pair_details(self, file_path_a: str, file_path_b: str) -> Dict[str, Any]:
         self._structural.prepare_batch([Path(file_path_a), Path(file_path_b)])
@@ -306,256 +419,106 @@ class CloneAnalyzer:
     # =========================================================================
 
     def _analyze_pair(self, file_a: str, file_b: str, include_details: bool = False,
-                  enable_type1=True, enable_type2=True,
-                  enable_type3=True, enable_type4=True) -> PairResult:
+                      enable_type1=True, enable_type2=True, enable_type3=True, enable_type4=True) -> PairResult:
         path_a = Path(file_a)
         path_b = Path(file_b)
-
-        t1_score = 0.0
-        t2_score = 0.0
-
+        t1_score = t2_score = 0.0
         if enable_type1:
-            t1_result = self._type1.detect(file_a, file_b)
-            t1_score  = t1_result.get("type1_score", 0.0)
-
+            t1_score = self._type1.detect(file_a, file_b).get("type1_score", 0.0)
         if enable_type2:
-            t2_result = self._type2.detect(file_a, file_b)
-            t2_score  = t2_result.get("type2_score", 0.0)
-
-        structural = self._run_structural(path_a, path_b, include_details) \
-                    if enable_type3 else StructuralResult(score=0.0, is_similar=False,
-                                                        confidence="UNLIKELY")
-
-        semantic = self._run_semantic(path_a, path_b, t1_score, t2_score,
-                                    structural.score, include_details) \
-                if enable_type4 else SemanticResult(score=0.0, is_similar=False,
-                                                    confidence="UNLIKELY")
-
-        primary_clone_type = self._determine_primary_clone_type(
-            t1_score, t2_score, structural.score, semantic.score
-        )
-        level        = self._get_similarity_level(structural, semantic)
+            t2_score = self._type2.detect(file_a, file_b).get("type2_score", 0.0)
+        structural = self._run_structural(path_a, path_b, include_details) if enable_type3 else StructuralResult(score=0.0, is_similar=False, confidence="UNLIKELY")
+        semantic = self._run_semantic(path_a, path_b, t1_score, t2_score, structural.score, include_details) if enable_type4 else SemanticResult(score=0.0, is_similar=False, confidence="UNLIKELY")
+        primary_clone_type = self._determine_primary_clone_type(t1_score, t2_score, structural.score, semantic.score)
+        level = self._get_similarity_level(structural, semantic)
         needs_review = self._should_review(structural, semantic)
-        summary      = self._generate_summary(structural, semantic, level, primary_clone_type)
+        summary = self._generate_summary(structural, semantic, level, primary_clone_type)
+        return PairResult(file_a=path_a.name, file_b=path_b.name, structural=structural, semantic=semantic,
+                          similarity_level=level, needs_review=needs_review, summary=summary,
+                          type1_score=round(t1_score, 4), type2_score=round(t2_score, 4),
+                          primary_clone_type=primary_clone_type)
 
-        return PairResult(
-            file_a=path_a.name,
-            file_b=path_b.name,
-            structural=structural,
-            semantic=semantic,
-            similarity_level=level,
-            needs_review=needs_review,
-            summary=summary,
-            type1_score=round(t1_score, 4),
-            type2_score=round(t2_score, 4),
-            primary_clone_type=primary_clone_type,
-        )
-
-    def _determine_primary_clone_type(
-        self,
-        type1_score: float,
-        type2_score: float,
-        structural_score: float,
-        semantic_score: float,
-    ) -> str:
-        """
-        Priority: Type-1 > Type-2 > Type-3 > Type-4 > none
-
-        type2  threshold LOWERED 0.80 → 0.65:
-            File-level type2_score is diluted by different main()/test boilerplate.
-        type4  threshold RAISED  0.60 → 0.70:
-            Prevents false type4 for independent implementations of textbook algorithms.
-        """
-        if type1_score >= 0.95:
-            return "type1"
-        if type2_score >= 0.65:
-            return "type2"
-        if structural_score >= 0.50:
-            return "type3"
-        if semantic_score >= 0.60:  # educational pipeline threshold
-            return "type4"
+    def _determine_primary_clone_type(self, t1: float, t2: float, t3: float, t4: float) -> str:
+        if t1 >= 0.98: return "type1"
+        if t2 >= 0.90: return "type2"
+        if t3 >= 0.50: return "type3"
+        if t4 >= 0.60: return "type4"
         return "none"
 
-    # =========================================================================
-    # STRUCTURAL (TYPE-3) ANALYSIS
-    # =========================================================================
-
     def _run_structural(self, file_a: Path, file_b: Path, include_details: bool) -> StructuralResult:
-        """
-        Run structural (Type-3) analysis.
-
-        Key behaviours:
-          - ML unavailable → use hybrid score alone (not hybrid * 0.5)
-          - is_similar uses hybrid alone (OR logic, not AND)
-          - Discrimination data propagated for downstream use
-          - Hybrid discount × 0.40 when ALL fragment pairs are type1/type2
-            (prevents AST/metrics inflation from misclassifying renames as type3)
-        """
         raw = self._structural.detect(file_a, file_b)
-
-        hybrid       = raw["hybrid"]
-        ml           = raw.get("ml")
+        hybrid = raw["hybrid"]
+        ml = raw.get("ml")
         hybrid_score = hybrid["score"]
-        ml_score     = ml["score"] if ml else None
-
+        ml_score = ml["score"] if ml else None
         discrimination = raw.get("clone_type_discrimination", {})
-        t3_found   = discrimination.get("type3_pairs_detected", 0)
-        t1_found   = discrimination.get("type1_pairs_filtered",  0)
-        t2_found   = discrimination.get("type2_pairs_filtered",  0)
-        any_type12 = (t1_found + t2_found) > 0
-
-        # Hybrid discount: if ALL fragments are type1/type2 and NONE are type3,
-        # the raw hybrid score measures a rename — discount it heavily.
-        if t3_found == 0 and any_type12:
-            hybrid_score = hybrid_score * 0.40
-
-        if ml_score is not None:
-            score = (hybrid_score * 0.6) + (ml_score * 0.4)
-        else:
-            score = hybrid_score
-
+        t3_found = discrimination.get("type3_pairs_detected", 0)
+        t1_found = discrimination.get("type1_pairs_filtered", 0)
+        t2_found = discrimination.get("type2_pairs_filtered", 0)
+        if t3_found == 0 and (t1_found + t2_found) > 0:
+            hybrid_score *= 0.40
+        score = (hybrid_score * 0.6) + (ml_score * 0.4) if ml_score is not None else hybrid_score
         is_similar = hybrid_score >= self.config.structural_threshold
-        if ml_score is not None:
-            if ml_score < 0.30 and hybrid_score < self.config.structural_high:
-                is_similar = False
-
+        if ml_score is not None and ml_score < 0.30 and hybrid_score < self.config.structural_high:
+            is_similar = False
         confidence = self._get_confidence(score, "structural")
-
         details = None
         if include_details:
             detail_data = hybrid.get("details", {})
             details = StructuralDetails(
                 winnowing_score=round(detail_data.get("winnowing_fingerprint_score", 0.0), 4),
-                ast_score      =round(detail_data.get("ast_skeleton_score",          0.0), 4),
-                metrics_score  =round(detail_data.get("complexity_metric_score",     0.0), 4),
-                ml_score       =round(ml_score, 4) if ml_score is not None else None,
-                hybrid_score   =round(hybrid_score, 4),
+                ast_score=round(detail_data.get("ast_skeleton_score", 0.0), 4),
+                metrics_score=round(detail_data.get("complexity_metric_score", 0.0), 4),
+                ml_score=round(ml_score, 4) if ml_score is not None else None,
+                hybrid_score=round(hybrid_score, 4),
             )
-
-        # Carry the raw all_type3_pairs through so _pair_to_dict can
-        # serialize fragment source code in detailed mode.
         all_type3_pairs = raw.get("all_type3_pairs", [])
+        return StructuralResult(score=round(score, 4), is_similar=is_similar, confidence=confidence,
+                                details=details, discrimination=discrimination, all_type3_pairs=all_type3_pairs)
 
-        return StructuralResult(
-            score=round(score, 4),
-            is_similar=is_similar,
-            confidence=confidence,
-            details=details,
-            discrimination=discrimination,
-            all_type3_pairs=all_type3_pairs,
-        )
-
-    # =========================================================================
-    # SEMANTIC (TYPE-4) ANALYSIS — EDUCATIONAL PIPELINE
-    # =========================================================================
-
-    def _run_semantic(
-        self,
-        file_a: Path,
-        file_b: Path,
-        t1_score: float,
-        t2_score: float,
-        t3_score: float,
-        include_details: bool = False,
-    ) -> SemanticResult:
-        """
-        Run Type-4 educational semantic detection.
-
-        Pre-filter:
-          If max(t1, t2, t3) >= 0.50, the pair is already detected as a
-          textual/structural clone.  Type-4 detection would be redundant
-          and expensive — return zeros immediately.
-
-        When _semantic is None (init failed): return zeros.
-        """
-        # ── Pre-filter: skip T4 if T1/T2/T3 already strong ───────────────
-        text_structural_max = max(t1_score, t2_score, t3_score)
-        if text_structural_max >= 0.50:
-            return SemanticResult(
-                score=0.0,
-                is_similar=False,
-                confidence="UNLIKELY",
-                details=None,
-            )
-
-        if self._semantic is None:
-            return SemanticResult(
-                score=0.0,
-                is_similar=False,
-                confidence="UNLIKELY",
-                details=None,
-            )
-
+    def _run_semantic(self, file_a: Path, file_b: Path, t1: float, t2: float, t3: float,
+                      include_details: bool = False) -> SemanticResult:
+        if max(t1, t2, t3) >= 0.50 or self._semantic is None:
+            return SemanticResult(score=0.0, is_similar=False, confidence="UNLIKELY", details=None)
         try:
-            raw = self._semantic.detect(
-                file_a, file_b,
-                include_features=include_details,
-            )
-
-            score      = float(raw.get("semantic_score", 0.0))
+            raw = self._semantic.detect(file_a, file_b, include_features=include_details)
+            score = float(raw.get("semantic_score", 0.0))
             is_similar = bool(raw.get("is_semantic_clone", False))
-            conf_raw   = raw.get("confidence", "UNLIKELY")
-            # Normalise confidence to what the engine uses
-            conf_map   = {
-                "HIGH":     "HIGH",
-                "MEDIUM":   "MEDIUM",
-                "LOW":      "LOW",
-                "UNLIKELY": "UNLIKELY",
-                "high":     "HIGH",
-                "medium":   "MEDIUM",
-                "low":      "LOW",
-            }
+            conf_raw = raw.get("confidence", "UNLIKELY")
+            conf_map = {"HIGH": "HIGH", "MEDIUM": "MEDIUM", "LOW": "LOW", "UNLIKELY": "UNLIKELY",
+                        "high": "HIGH", "medium": "MEDIUM", "low": "LOW"}
             confidence = conf_map.get(str(conf_raw), "LOW")
-
             cat = raw.get("category_scores", {})
             details = None
             if include_details:
                 details = SemanticDetails(
-                    control_flow_score = float(cat.get("control_flow", 0.0)),
-                    data_flow_score    = float(cat.get("data_flow",    0.0)),
-                    call_pattern_score = float(cat.get("call_pattern", 0.0)),
-                    structural_score   = float(cat.get("structural",   0.0)),
-                    behavioral_score   = float(cat.get("behavioral",   0.0)),
-                    behavioral_hash_a  = str(raw.get("interpretation", "")),
-                    behavioral_hash_b  = "",
+                    control_flow_score=float(cat.get("control_flow", 0.0)), data_flow_score=float(cat.get("data_flow", 0.0)),
+                    call_pattern_score=float(cat.get("call_pattern", 0.0)), structural_score=float(cat.get("structural", 0.0)),
+                    behavioral_score=float(cat.get("behavioral", 0.0)), behavioral_hash_a=str(raw.get("interpretation", "")), behavioral_hash_b=""
                 )
-
-            return SemanticResult(
-                score          = round(score, 4),
-                is_similar     = is_similar,
-                confidence     = confidence,
-                details        = details,
-                # Pass educational enrichment fields through to _pair_to_dict
-                io_match_score = raw.get("io_match_score"),
-                io_available   = bool(raw.get("io_available", False)),
-                interpretation = str(raw.get("interpretation", "")),
-            )
-
+            return SemanticResult(score=round(score, 4), is_similar=is_similar, confidence=confidence, details=details,
+                                  io_match_score=raw.get("io_match_score"), io_available=bool(raw.get("io_available", False)),
+                                  interpretation=str(raw.get("interpretation", "")))
         except Exception as exc:
             print(f"[Analyzer] Type-4 detect() error: {exc}")
-            return SemanticResult(
-                score=0.0,
-                is_similar=False,
-                confidence="UNLIKELY",
-                details=None,
-            )
+            return SemanticResult(score=0.0, is_similar=False, confidence="UNLIKELY", details=None)
 
     # =========================================================================
-    # HELPERS
+    # HELPERS (keep all existing helper methods - they are correct)
     # =========================================================================
-
+    
     def _get_confidence(self, score: float, analysis_type: str) -> str:
         if analysis_type == "structural":
-            if score >= self.config.structural_high + 0.15:  return "CRITICAL"
-            if score >= self.config.structural_high:          return "HIGH"
-            if score >= self.config.structural_threshold:     return "MEDIUM"
-            if score >= 0.35:                                  return "LOW"
+            if score >= self.config.structural_high + 0.15: return "CRITICAL"
+            if score >= self.config.structural_high: return "HIGH"
+            if score >= self.config.structural_threshold: return "MEDIUM"
+            if score >= 0.35: return "LOW"
             return "UNLIKELY"
         else:
-            if score >= self.config.semantic_high + 0.10:    return "CRITICAL"
-            if score >= self.config.semantic_high:            return "HIGH"
-            if score >= self.config.semantic_threshold:       return "MEDIUM"
-            if score >= 0.40:                                  return "LOW"
+            if score >= self.config.semantic_high + 0.10: return "CRITICAL"
+            if score >= self.config.semantic_high: return "HIGH"
+            if score >= self.config.semantic_threshold: return "MEDIUM"
+            if score >= 0.40: return "LOW"
             return "UNLIKELY"
 
     def _get_similarity_level(self, structural: StructuralResult, semantic: SemanticResult) -> str:
@@ -569,26 +532,17 @@ class CloneAnalyzer:
     def _should_review(self, structural: StructuralResult, semantic: SemanticResult) -> bool:
         return max(structural.score, semantic.score) >= self.config.review_threshold
 
-    def _generate_summary(
-        self, structural: StructuralResult, semantic: SemanticResult,
-        level: str, primary_clone_type: str = "none"
-    ) -> str:
-        labels = {
-            "type1": "Type-1 (Exact Copy)",
-            "type2": "Type-2 (Renamed Variables)",
-            "type3": "Type-3 (Structural Clone)",
-            "type4": "Type-4 (Semantic/Algorithmic Clone)",
-            "none":  "No significant clone detected",
-        }
+    def _generate_summary(self, structural: StructuralResult, semantic: SemanticResult,
+                          level: str, primary_clone_type: str = "none") -> str:
+        labels = {"type1": "Type-1 (Exact Copy)", "type2": "Type-2 (Renamed Variables)",
+                  "type3": "Type-3 (Structural Clone)", "type4": "Type-4 (Semantic/Algorithmic Clone)",
+                  "none": "No significant clone detected"}
         lbl = labels.get(primary_clone_type, "Unknown")
-
-        # For Type-4, prefer the semantic interpretation string if available
         if primary_clone_type == "type4" and semantic.details:
             interp = getattr(semantic.details, "behavioral_hash_a", "")
             if interp:
                 return f"⚠️ {lbl} — {interp}"
             return f"⚠️ {lbl} — Semantic score: {semantic.score:.0%}. Review needed."
-
         if level in ("CRITICAL", "HIGH"):
             return f"⚠️ {lbl} — Structural: {structural.score:.0%}. Needs review."
         if level == "MEDIUM":

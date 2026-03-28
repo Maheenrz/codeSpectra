@@ -1,8 +1,6 @@
 import api from '../utils/api';
 
 const courseService = {
-  // ========== COURSE CRUD ==========
-  
   async getAllCourses() {
     const response = await api.get('/courses');
     return response.data;
@@ -38,8 +36,6 @@ const courseService = {
     return response.data;
   },
 
-  // ========== ENROLLMENT MANAGEMENT ==========
-
   async getCourseStudents(courseId) {
     const response = await api.get(`/courses/${courseId}/students`);
     return response.data;
@@ -54,8 +50,6 @@ const courseService = {
     const response = await api.delete(`/courses/${courseId}/students/${studentId}`);
     return response.data;
   },
-
-  // ========== JOIN CODE METHODS (ADDED) ==========
 
   async getCourseByJoinCode(joinCode) {
     const response = await api.get(`/courses/join/${joinCode}`);

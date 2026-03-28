@@ -42,15 +42,14 @@ from detectors.type3.lcs_comparator import lcs_similarity
 
 # ─── Thresholds ───────────────────────────────────────────────────────────────
 
-TYPE1_RAW_THRESHOLD  = 0.95   # raw ≥ this → exact copy (Type-1)
-TYPE2_NORM_THRESHOLD = 0.95   # norm ≥ this → renamed identifiers (Type-2)
-TYPE3_ST_THRESHOLD   = 0.70   # norm ≥ this → ST3 / VST3 (Type-3, high confidence)
-TYPE3_MT_THRESHOLD   = 0.50   # norm ≥ this → MT3 (Type-3, medium confidence)
-MT3_GAP_MIN          = 0.08   # minimum gap_ratio required to confirm MT3
-                               # (filters out unrelated code that happens to
-                               #  score 50–70% due to similar structure patterns)
 
-# Confidence penalty for MT3: the score is discounted to reflect lower certainty
+# Research-based thresholds (NiCad, BigCloneBench)
+TYPE1_RAW_THRESHOLD  = 0.98   # Raised from 0.95
+TYPE2_NORM_THRESHOLD = 0.95
+TYPE3_ST_THRESHOLD   = 0.70   # Strong Type-3 (ST3)
+TYPE3_MT_THRESHOLD   = 0.50   # Moderate Type-3 (MT3)
+TYPE3_VST_THRESHOLD  = 0.90   # Very Strong Type-3 (VST3)
+MT3_GAP_MIN          = 0.08
 MT3_SCORE_PENALTY    = 0.85
 
 
@@ -122,6 +121,7 @@ def compare_fragments(frag_a: Fragment, frag_b: Fragment) -> FragmentComparisonR
     )
 
 
+
 def _classify(
     raw_sim:   float,
     norm_sim:  float,
@@ -129,42 +129,40 @@ def _classify(
     gap_ratio: float,
 ) -> Tuple[str, str, bool, float, str]:
     """
-    Classify a fragment pair.
+    Research-based classification (NiCad + BigCloneBench)
     Returns: (clone_type, clone_band, is_type3, type3_score, confidence)
     """
-
-    # ── Type-1: exact copy (raw tokens nearly identical) ──────────────────
+    # ── Type-1: Exact copy ──────────────────────────────────────────────
     if raw_sim >= TYPE1_RAW_THRESHOLD:
         return ("type1", "type1", False, 0.0, "HIGH")
 
-    # ── Type-2: renamed identifiers (norm identical but raw differs) ───────
-    if norm_sim >= TYPE2_NORM_THRESHOLD:
+    # ── Type-2: Renamed identifiers ────────────────────────────────────
+    if norm_sim >= TYPE2_NORM_THRESHOLD and raw_sim < TYPE1_RAW_THRESHOLD:
         return ("type2", "type2", False, 0.0, "HIGH")
 
-    # ── Type-3 ST3/VST3: strongly similar structural clone ─────────────────
-    # norm ≥ 0.70: real structural modifications beyond renaming.
-    # Band is VST3 if norm ≥ 0.90, else ST3.
+    # ── Type-3: Structural clones (NiCad approach) ────────────────────
     if norm_sim >= TYPE3_ST_THRESHOLD:
-        band       = "VST3" if norm_sim >= 0.90 else "ST3"
-        score      = round(norm_sim, 4)
-        confidence = "HIGH" if norm_sim >= 0.80 else "MEDIUM"
-        return ("type3", band, True, score, confidence)
+        # Determine band (VST3 vs ST3)
+        if norm_sim >= TYPE3_VST_THRESHOLD:
+            band = "VST3"
+            confidence = "HIGH"
+        else:
+            band = "ST3"
+            confidence = "MEDIUM" if norm_sim >= 0.80 else "MEDIUM"
 
-    # ── Type-3 MT3: moderately similar structural clone ────────────────────
-    # norm 0.50–0.70: weaker structural overlap.
-    # Requires gap_ratio >= MT3_GAP_MIN to confirm it's not just two
-    # unrelated files that happen to use similar control-flow patterns.
-    # Also uses deep_sim (structural normalization) as a confirmation signal:
-    # if deep_sim is high, the structural skeleton is truly similar.
+        # Type-3 confidence based on gap ratio (research shows gap_ratio indicates renaming)
+        if gap_ratio >= 0.10:
+            confidence = "HIGH"  # Significant renaming detected
+        elif gap_ratio >= 0.05:
+            confidence = "MEDIUM"
+
+        return ("type3", band, True, round(norm_sim, 4), confidence)
+
+    # ── Type-3 MT3: Moderate structural similarity ────────────────────
     if norm_sim >= TYPE3_MT_THRESHOLD:
-        # Confirm: either the gap_ratio suggests renaming happened,
-        # or the deep structural similarity is high (same skeleton)
-        gap_confirms  = gap_ratio >= MT3_GAP_MIN
-        deep_confirms = deep_sim >= 0.65
-
-        if gap_confirms or deep_confirms:
-            # Apply score penalty to reflect lower certainty
-            score = round(norm_sim * MT3_SCORE_PENALTY, 4)
+        # NiCad uses deep structural similarity to confirm MT3
+        if deep_sim >= 0.65 or gap_ratio >= 0.08:
+            score = round(norm_sim * 0.90, 4)  # Penalize MT3 slightly
             return ("type3", "MT3", True, score, "LOW")
 
     return ("none", "none", False, 0.0, "UNLIKELY")

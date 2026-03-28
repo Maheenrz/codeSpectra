@@ -1,0 +1,1 @@
+{"timestamp": 1774690008.4966176, "result": {"semantic_score": 0.12, "is_semantic_clone": false, "confidence": "UNLIKELY", "backend": "educational_type4", "category": "", "interpretation": "\u2705 Not a semantic clone (12%)", "io_match_score": null, "io_available": false, "category_scores": {"control_flow": 0.0, "data_flow": 0.0, "behavioral": 0, "structural": 0.3}}}

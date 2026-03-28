@@ -1,40 +1,30 @@
-# detectors/type3/fragment_extractor.py
 """
 Fragment Extractor — Code Block Extraction
 ============================================
 Extracts function/method/block fragments from source files using
 regex-based parsing (no tree-sitter dependency).
-
-A fragment is a contiguous block of code (a function, method, or
-meaningful block) with:
-  - min_lines:  minimum source lines (default 6)
-  - min_tokens: minimum token count (default 20)
-
-Supports: C/C++, Java, Python, JavaScript/TypeScript
-
-Why fragment-level?
-  Comparing whole files is too coarse — two files may share one
-  copied function buried among original code.  Fragment extraction
-  lets us find the specific copied block and measure its similarity
-  independently from the rest of the file.
 """
 
 from __future__ import annotations
 import re
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Fragment:
     """A single code fragment extracted from a file."""
     file_path:    str
-    name:         str          # function/method name or "block_N"
+    name:         str
     start_line:   int
     end_line:     int
-    source_lines: List[str]    # raw lines
-    tokens:       List[str]    # tokenized (raw, before normalization)
+    source_lines: List[str]
+    tokens:       List[str]
+    student_id:   Optional[str] = None
+    student_name: Optional[str] = None
 
     @property
     def line_count(self) -> int:
@@ -47,7 +37,6 @@ class Fragment:
 
 # ── Language patterns ─────────────────────────────────────────────────────────
 
-# C++ / C / Java  — matches "type name(...) {" with brace tracking
 _CPP_JAVA_FUNC = re.compile(
     r'^[ \t]*(?:(?:public|private|protected|static|virtual|inline|override|'
     r'const|explicit|friend|extern|async|synchronized|abstract|final)\s+)*'
@@ -56,12 +45,10 @@ _CPP_JAVA_FUNC = re.compile(
     re.MULTILINE
 )
 
-# Python — def or async def
 _PYTHON_FUNC = re.compile(
     r'^([ \t]*)(async\s+)?def\s+(\w+)\s*\(', re.MULTILINE
 )
 
-# JavaScript / TypeScript — function / arrow / class method
 _JS_FUNC = re.compile(
     r'^[ \t]*(?:(?:async|static|public|private|protected|export|default)\s+)*'
     r'(?:function\s+(\w+)|(\w+)\s*[:=]\s*(?:async\s*)?\(|(\w+)\s*\()',
@@ -79,17 +66,32 @@ _EXT_LANG = {
 
 
 class FragmentExtractor:
-    def __init__(self, min_lines: int = 6, min_tokens: int = 20):
-        self.min_lines  = min_lines
+    def __init__(self, min_lines: int = 6, min_tokens: int = 20, exclude_headers: bool = True):
+        self.min_lines = min_lines
         self.min_tokens = min_tokens
-
-    # ── Public API ────────────────────────────────────────────────────────────
+        self.exclude_headers = exclude_headers
 
     def extract(self, file_path: str) -> List[Fragment]:
-        """Extract all fragments from a source file."""
+        """Extract fragments, skipping header files and macOS files"""
         path = Path(file_path)
         if not path.exists():
             return []
+
+        # 1. macOS files
+        if self._is_macos_file(path):
+            logger.debug(f"Skipping macOS file: {path.name}")
+            return []
+
+        # 2. Header files
+        if self.exclude_headers and path.suffix.lower() in ['.h', '.hpp', '.hxx']:
+            logger.debug(f"Skipping header file: {path.name}")
+            return []
+
+        # 3. Boilerplate files (main, driver, test, etc.)
+        if self._is_boilerplate_file(path):
+            logger.debug(f"Skipping boilerplate file: {path.name}")
+            return []
+
         lang = _EXT_LANG.get(path.suffix.lower(), "cpp")
         try:
             source = path.read_text(encoding="utf-8", errors="ignore")
@@ -106,34 +108,44 @@ class FragmentExtractor:
                 if f.line_count >= self.min_lines
                 and f.token_count >= self.min_tokens]
 
+    def _is_macos_file(self, path: Path) -> bool:
+        """Skip macOS metadata files"""
+        name = path.name
+        if name.startswith('._') or '__MACOSX' in str(path):
+            return True
+        if name.startswith('.'):
+            return True
+        ignore_patterns = ['.DS_Store', 'Thumbs.db', 'desktop.ini']
+        if name in ignore_patterns:
+            return True
+        return False
+
+    def _is_boilerplate_file(self, path: Path) -> bool:
+        boilerplate_patterns = ['test', 'unittest', 'spec', 'main', 'driver', 'example', 'demo']
+        name = path.stem.lower()
+        return any(pattern in name for pattern in boilerplate_patterns)
+
     def extract_many(self, file_paths: List[str]) -> List[Fragment]:
-        """Extract fragments from multiple files."""
         result = []
         for fp in file_paths:
             result.extend(self.extract(fp))
         return result
 
-    # ── C++ / Java / JS: brace-tracking ──────────────────────────────────────
-
-    def _extract_braced(self, source: str, file_path: str,
-                        lang: str) -> List[Fragment]:
+    def _extract_braced(self, source: str, file_path: str, lang: str) -> List[Fragment]:
         lines = source.splitlines()
         fragments: List[Fragment] = []
         used_starts: set = set()
 
         pattern = _CPP_JAVA_FUNC if lang in ("cpp", "java") else _JS_FUNC
         for m in pattern.finditer(source):
-            # Find which line this match starts on
             start_line = source[:m.start()].count("\n")
             if start_line in used_starts:
                 continue
 
-            # Find opening brace on or near match line
             open_pos = source.find("{", m.start())
             if open_pos == -1:
                 continue
 
-            # Track braces to find the closing one
             depth = 0
             end_pos = open_pos
             for i in range(open_pos, len(source)):
@@ -153,7 +165,7 @@ class FragmentExtractor:
             name = name_groups[0] if name_groups else f"block_{start_line}"
 
             frag_lines = lines[start_line: end_line + 1]
-            tokens     = self._tokenize_lines(frag_lines)
+            tokens = self._tokenize_lines(frag_lines)
 
             fragments.append(Fragment(
                 file_path=file_path,
@@ -167,11 +179,9 @@ class FragmentExtractor:
 
         return fragments
 
-    # ── Python: indent-tracking ───────────────────────────────────────────────
-
     def _extract_python(self, source: str, file_path: str) -> List[Fragment]:
-        lines  = source.splitlines()
-        n      = len(lines)
+        lines = source.splitlines()
+        n = len(lines)
         frags: List[Fragment] = []
 
         for m in _PYTHON_FUNC.finditer(source):
@@ -183,7 +193,7 @@ class FragmentExtractor:
             end_line = start_line
             for i in range(start_line + 1, n):
                 stripped = lines[i].lstrip()
-                if not stripped:          # blank line — keep scanning
+                if not stripped:
                     continue
                 line_indent = len(lines[i].expandtabs(4)) - len(stripped)
                 if line_indent <= base_indent:
@@ -191,7 +201,7 @@ class FragmentExtractor:
                 end_line = i
 
             frag_lines = lines[start_line: end_line + 1]
-            tokens     = self._tokenize_lines(frag_lines)
+            tokens = self._tokenize_lines(frag_lines)
             frags.append(Fragment(
                 file_path=file_path,
                 name=name,
@@ -203,20 +213,11 @@ class FragmentExtractor:
 
         return frags
 
-    # ── Tokenizer (raw, before normalization) ─────────────────────────────────
-
     @staticmethod
     def _tokenize_lines(lines: List[str]) -> List[str]:
-        """
-        Tokenize source lines into raw tokens.
-        Strips single-line comments but keeps all identifiers as-is.
-        These raw tokens are what we compare BEFORE normalization
-        to distinguish Type-1/2 from Type-3.
-        """
         tokens = []
         for line in lines:
-            # Strip single-line comments
-            line = re.sub(r'//.*$',  '',  line)
-            line = re.sub(r'#.*$',   '',  line)
+            line = re.sub(r'//.*$', '', line)
+            line = re.sub(r'#.*$', '', line)
             tokens.extend(re.findall(r'[a-zA-Z_]\w*|[0-9]+(?:\.[0-9]+)?|[^\s\w]', line))
         return tokens
