@@ -1,2 +1,8 @@
 .env
 .venv
+
+# Ignore all .pyc files
+**/*.pyc
+
+#ignore cache folder
+.cache/*

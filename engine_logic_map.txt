@@ -1,0 +1,637 @@
+analysis-engine/tranform_pair_features.py:import sys
+analysis-engine/tranform_pair_features.py:import csv
+analysis-engine/tranform_pair_features.py:from pathlib import Path
+analysis-engine/tranform_pair_features.py:from core.ast_ml_adapter import ASTMLAdapter
+analysis-engine/tranform_pair_features.py:def build_unit_map(adapter: ASTMLAdapter):
+analysis-engine/tranform_pair_features.py:def make_row(adapter: ASTMLAdapter, ua, ub, label: int):
+analysis-engine/tranform_pair_features.py:def main():
+analysis-engine/test_joern.py:import sys
+analysis-engine/test_joern.py:import os
+analysis-engine/test_joern.py:from joern import JoernDetector
+analysis-engine/test_joern.py:def main():
+analysis-engine/test_joern.py:def factorial(n):
+analysis-engine/test_joern.py:def compute_factorial(x):
+analysis-engine/test_joern.py:def factorial_iterative(n):
+analysis-engine/test_joern.py:def bubble_sort(arr):
+analysis-engine/core/detection_engine.py:from typing import List, Dict, Any, Optional
+analysis-engine/core/detection_engine.py:from dataclasses import dataclass
+analysis-engine/core/detection_engine.py:from enum import Enum
+analysis-engine/core/detection_engine.py:import time
+analysis-engine/core/detection_engine.py:from concurrent.futures import ThreadPoolExecutor, as_completed
+analysis-engine/core/detection_engine.py:class CloneType(Enum):
+analysis-engine/core/detection_engine.py:class MethodResult:
+analysis-engine/core/detection_engine.py:class ComparisonResult:
+analysis-engine/core/detection_engine.py:class MultiMethodDetectionEngine:
+analysis-engine/core/ast_processor.py:import os
+analysis-engine/core/ast_processor.py:import re
+analysis-engine/core/ast_processor.py:import difflib
+analysis-engine/core/ast_processor.py:from typing import Optional, Dict, Any
+analysis-engine/core/ast_processor.py:def _read_source(path: str) -> str:
+analysis-engine/core/ast_processor.py:def _keyword_sequence(source: str, lang: str) -> list:
+analysis-engine/core/ast_processor.py:class ASTProcessor:
+analysis-engine/core/tokenizer.py:from pygments import lex
+analysis-engine/core/tokenizer.py:from pygments.lexers import get_lexer_for_filename, guess_lexer
+analysis-engine/core/tokenizer.py:from pygments.token import Token
+analysis-engine/core/tokenizer.py:class CodeTokenizer:
+analysis-engine/core/ast_ml_adapter.py:from dataclasses import dataclass, asdict
+analysis-engine/core/ast_ml_adapter.py:from core.ast_processor import ASTProcessor
+analysis-engine/core/ast_ml_adapter.py:from typing import List, Dict, Tuple, Set, Any, Optional
+analysis-engine/core/ast_ml_adapter.py:import pathlib
+analysis-engine/core/ast_ml_adapter.py:import json
+analysis-engine/core/ast_ml_adapter.py:import hashlib
+analysis-engine/core/ast_ml_adapter.py:import numpy as np
+analysis-engine/core/ast_ml_adapter.py:import re
+analysis-engine/core/ast_ml_adapter.py:import os
+analysis-engine/core/ast_ml_adapter.py:import tempfile
+analysis-engine/core/ast_ml_adapter.py:class Unit:
+analysis-engine/core/ast_ml_adapter.py:class ASTMLAdapter:
+analysis-engine/config/__init__.py:from .extension_weights import get_file_weight, get_pair_weight, EXTENSION_WEIGHTS
+analysis-engine/config/__init__.py:from .thresholds import (
+analysis-engine/training/train_model.py:import csv
+analysis-engine/training/train_model.py:import json
+analysis-engine/training/train_model.py:from pathlib import Path
+analysis-engine/training/train_model.py:import numpy as np
+analysis-engine/training/train_model.py:from sklearn.model_selection import train_test_split
+analysis-engine/training/train_model.py:from sklearn.ensemble import RandomForestClassifier
+analysis-engine/training/train_model.py:from sklearn.metrics import classification_report, confusion_matrix
+analysis-engine/training/train_model.py:import joblib
+analysis-engine/training/train_model.py:def load_dataset(path: Path):
+analysis-engine/training/train_model.py:def main():
+analysis-engine/training/extract_features.py:import sys
+analysis-engine/training/extract_features.py:from pathlib import Path
+analysis-engine/training/extract_features.py:from typing import Optional, Dict, List, Tuple
+analysis-engine/training/extract_features.py:import numpy as np
+analysis-engine/training/extract_features.py:import pandas as pd
+analysis-engine/training/extract_features.py:from tqdm import tqdm
+analysis-engine/training/extract_features.py:from core.ast_ml_adapter import ASTMLAdapter
+analysis-engine/training/extract_features.py:class FeatureExtractor:
+analysis-engine/training/extract_features.py:def main():
+analysis-engine/training/download_datasets.py:import os
+analysis-engine/training/download_datasets.py:import sys
+analysis-engine/training/download_datasets.py:from pathlib import Path
+analysis-engine/training/download_datasets.py:from typing import Optional
+analysis-engine/training/download_datasets.py:import pandas as pd
+analysis-engine/training/download_datasets.py:class DatasetDownloader:
+analysis-engine/training/download_datasets.py:def main():
+analysis-engine/tests/test_type3_accuracy.py:import csv
+analysis-engine/tests/test_type3_accuracy.py:import sys
+analysis-engine/tests/test_type3_accuracy.py:import time
+analysis-engine/tests/test_type3_accuracy.py:from pathlib import Path
+analysis-engine/tests/test_type3_accuracy.py:from typing import Optional, List, Tuple
+analysis-engine/tests/test_type3_accuracy.py:from detectors.type3.hybrid_detector import Type3HybridDetector
+analysis-engine/tests/test_type3_accuracy.py:def load_pairs() -> List[Tuple[str, str, int]]:
+analysis-engine/tests/test_type3_accuracy.py:def _resolve_path(unit_id: str) -> Optional[Path]:
+analysis-engine/tests/test_type3_accuracy.py:def run():
+analysis-engine/tests/test_type3_accuracy.py:def _print_metrics(y_true, y_pred, y_scores):
+analysis-engine/tests/test_type3_accuracy.py:def _manual_metrics(y_true, y_pred):
+analysis-engine/tests/test_type3_accuracy.py:def _print_samples(pairs, y_true, y_pred, y_scores, n=5):
+analysis-engine/utils/zip_extractor.py:from __future__ import annotations
+analysis-engine/utils/zip_extractor.py:import os
+analysis-engine/utils/zip_extractor.py:import shutil
+analysis-engine/utils/zip_extractor.py:import tempfile
+analysis-engine/utils/zip_extractor.py:import zipfile
+analysis-engine/utils/zip_extractor.py:from pathlib import Path
+analysis-engine/utils/zip_extractor.py:from typing import Dict, List, Tuple
+analysis-engine/utils/zip_extractor.py:def _is_code(path: Path) -> bool:
+analysis-engine/utils/zip_extractor.py:def _collect_code_files(root: Path) -> List[str]:
+analysis-engine/utils/zip_extractor.py:class ZipExtractor:
+analysis-engine/utils/frequency_filter.py:import hashlib
+analysis-engine/utils/frequency_filter.py:from collections import Counter
+analysis-engine/utils/frequency_filter.py:class BatchFrequencyFilter:
+analysis-engine/utils/metrics_calculator.py:import re
+analysis-engine/utils/metrics_calculator.py:import lizard
+analysis-engine/utils/metrics_calculator.py:import numpy as np
+analysis-engine/utils/metrics_calculator.py:from pathlib import Path
+analysis-engine/utils/metrics_calculator.py:from typing import List
+analysis-engine/utils/metrics_calculator.py:class MetricsCalculator:
+analysis-engine/tranform_pairs.py:import os
+analysis-engine/tranform_pairs.py:import sys
+analysis-engine/tranform_pairs.py:import csv
+analysis-engine/tranform_pairs.py:import numpy as np
+analysis-engine/tranform_pairs.py:from pathlib import Path
+analysis-engine/tranform_pairs.py:from typing import List, Dict, Tuple
+analysis-engine/tranform_pairs.py:from core.ast_ml_adapter import ASTMLAdapter  # use the adapter file you're actively using
+analysis-engine/tranform_pairs.py:def get_cpp_files(base_dir: Path) -> List[Path]:
+analysis-engine/tranform_pairs.py:def preprocess_units(ast_adapter: ASTMLAdapter, cpp_files: List[Path]) -> Tuple[List, Dict[str, int]]:
+analysis-engine/tranform_pairs.py:def vectorize_corpus(ast_adapter: ASTMLAdapter, units_all: List) -> np.ndarray:
+analysis-engine/tranform_pairs.py:def transform_pairs(pairs_csv: Path, id_to_index: Dict[str, int], X: np.ndarray, output_csv: Path):
+analysis-engine/tranform_pairs.py:def main():
+analysis-engine/api/routes/analysis.py:from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+analysis-engine/api/routes/analysis.py:import time
+analysis-engine/api/routes/analysis.py:import traceback
+analysis-engine/api/routes/analysis.py:from detectors.type1.hash_method import HashMethod
+analysis-engine/api/routes/analysis.py:from detectors.type1.ast_exact_method import ASTExactMethod
+analysis-engine/api/routes/analysis.py:from detectors.type1.string_method import StringMethod
+analysis-engine/detectors/type1/ast_exact_method.py:import ast
+analysis-engine/detectors/type1/ast_exact_method.py:import hashlib
+analysis-engine/detectors/type1/ast_exact_method.py:import re
+analysis-engine/detectors/type1/ast_exact_method.py:from typing import List, Dict, Any
+analysis-engine/detectors/type1/ast_exact_method.py:from collections import defaultdict
+analysis-engine/detectors/type1/ast_exact_method.py:class Type1ASTMethod:
+analysis-engine/detectors/type1/string_method.py:import re
+analysis-engine/detectors/type1/string_method.py:from typing import List, Dict
+analysis-engine/detectors/type1/string_method.py:class Type1StringMethod:
+analysis-engine/detectors/type1/type1_detector.py:import difflib
+analysis-engine/detectors/type1/type1_detector.py:import hashlib
+analysis-engine/detectors/type1/type1_detector.py:import re
+analysis-engine/detectors/type1/type1_detector.py:from pathlib import Path
+analysis-engine/detectors/type1/type1_detector.py:from typing import Any, Dict
+analysis-engine/detectors/type1/type1_detector.py:class Type1Detector:
+analysis-engine/detectors/type1/__init__.py:from .hash_method import Type1HashMethod
+analysis-engine/detectors/type1/__init__.py:from .string_method import Type1StringMethod
+analysis-engine/detectors/type1/__init__.py:from .ast_exact_method import Type1ASTMethod
+analysis-engine/detectors/type1/pmd_cpd_method.py:import subprocess
+analysis-engine/detectors/type1/pmd_cpd_method.py:import json
+analysis-engine/detectors/type1/pmd_cpd_method.py:import os
+analysis-engine/detectors/type1/pmd_cpd_method.py:from typing import List, Dict, Any
+analysis-engine/detectors/type1/pmd_cpd_method.py:from dataclasses import dataclass
+analysis-engine/detectors/type1/pmd_cpd_method.py:import time
+analysis-engine/detectors/type1/pmd_cpd_method.py:class CodeFragment:
+analysis-engine/detectors/type1/pmd_cpd_method.py:class CloneMatch:
+analysis-engine/detectors/type1/pmd_cpd_method.py:class Type1PMDMethod:
+analysis-engine/detectors/type1/hash_method.py:import re
+analysis-engine/detectors/type1/hash_method.py:import hashlib
+analysis-engine/detectors/type1/hash_method.py:from typing import List, Dict
+analysis-engine/detectors/type1/hash_method.py:from collections import defaultdict
+analysis-engine/detectors/type1/hash_method.py:class Type1HashMethod:
+analysis-engine/detectors/base_detector.py:from abc import ABC, abstractmethod
+analysis-engine/detectors/base_detector.py:from typing import List, Dict, Any
+analysis-engine/detectors/base_detector.py:class BaseDetector(ABC):
+analysis-engine/detectors/unified/unified_detector.py:from typing import List, Dict, Any
+analysis-engine/detectors/unified/unified_detector.py:from pathlib import Path
+analysis-engine/detectors/unified/unified_detector.py:from dataclasses import dataclass, field
+analysis-engine/detectors/unified/unified_detector.py:from enum import Enum
+analysis-engine/detectors/unified/unified_detector.py:import time
+analysis-engine/detectors/unified/unified_detector.py:import sys
+analysis-engine/detectors/unified/unified_detector.py:from detectors.type1.type1_detector import Type1Detector
+analysis-engine/detectors/unified/unified_detector.py:from detectors.type2.type2_detector import Type2Detector
+analysis-engine/detectors/unified/unified_detector.py:from detectors.type3.hybrid_detector import Type3HybridDetector
+analysis-engine/detectors/unified/unified_detector.py:from detectors.type4.type4_detector import Type4Detector
+analysis-engine/detectors/unified/unified_detector.py:class CloneType(Enum):
+analysis-engine/detectors/unified/unified_detector.py:class RiskLevel(Enum):
+analysis-engine/detectors/unified/unified_detector.py:class ReviewAction(Enum):
+analysis-engine/detectors/unified/unified_detector.py:class Type3Result:
+analysis-engine/detectors/unified/unified_detector.py:class Type4Result:
+analysis-engine/detectors/unified/unified_detector.py:class UnifiedResult:
+analysis-engine/detectors/unified/unified_detector.py:class UnifiedDetector:
+analysis-engine/detectors/unified/__init__.py:from .unified_detector import UnifiedDetector
+analysis-engine/detectors/__init__.py:from detectors.type1.type1_detector import Type1Detector
+analysis-engine/detectors/__init__.py:from detectors.type2.type2_detector import Type2Detector
+analysis-engine/detectors/__init__.py:from detectors.type3.hybrid_detector import Type3HybridDetector
+analysis-engine/detectors/__init__.py:from detectors.type4.type4_detector import Type4Detector
+analysis-engine/detectors/type2/type2_detector.py:import re
+analysis-engine/detectors/type2/type2_detector.py:import difflib
+analysis-engine/detectors/type2/type2_detector.py:from pathlib import Path
+analysis-engine/detectors/type2/type2_detector.py:from typing import Any, Dict, List
+analysis-engine/detectors/type2/type2_detector.py:class Type2Detector:
+analysis-engine/detectors/type2/__init__.py:from detectors.type2.type2_detector import Type2Detector
+analysis-engine/detectors/type3/fragment_comparator.py:from __future__ import annotations
+analysis-engine/detectors/type3/fragment_comparator.py:from dataclasses import dataclass
+analysis-engine/detectors/type3/fragment_comparator.py:from typing import Tuple
+analysis-engine/detectors/type3/fragment_comparator.py:from detectors.type3.fragment_extractor import Fragment
+analysis-engine/detectors/type3/fragment_comparator.py:from detectors.type3.normalizer import normalize_tokens, structurally_normalize_tokens
+analysis-engine/detectors/type3/fragment_comparator.py:from detectors.type3.lcs_comparator import lcs_similarity
+analysis-engine/detectors/type3/fragment_comparator.py:class FragmentComparisonResult:
+analysis-engine/detectors/type3/fragment_comparator.py:def compare_fragments(frag_a: Fragment, frag_b: Fragment) -> FragmentComparisonResult:
+analysis-engine/detectors/type3/fragment_comparator.py:def _classify(
+analysis-engine/detectors/type3/fragment_comparator.py:def compare_fragments_raw_only(frag_a: Fragment, frag_b: Fragment) -> float:
+analysis-engine/detectors/type3/winnowing.py:import hashlib
+analysis-engine/detectors/type3/winnowing.py:class WinnowingDetector:
+analysis-engine/detectors/type3/fragment_extractor.py:from __future__ import annotations
+analysis-engine/detectors/type3/fragment_extractor.py:import re
+analysis-engine/detectors/type3/fragment_extractor.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type3/fragment_extractor.py:from pathlib import Path
+analysis-engine/detectors/type3/fragment_extractor.py:from typing import List, Optional
+analysis-engine/detectors/type3/fragment_extractor.py:class Fragment:
+analysis-engine/detectors/type3/fragment_extractor.py:class FragmentExtractor:
+analysis-engine/detectors/type3/config/extension_weights.py:from pathlib import Path
+analysis-engine/detectors/type3/config/extension_weights.py:def get_extension_weight(file_path: str) -> float:
+analysis-engine/detectors/type3/config/extension_weights.py:def get_pair_weight(file_a: str, file_b: str) -> float:
+analysis-engine/detectors/type3/config/thresholds.py:def get_thresholds(language: str) -> dict[str, float]:
+analysis-engine/detectors/type3/config/thresholds.py:def get_confidence(combined_score: float) -> str:
+analysis-engine/detectors/type3/training/train_model.py:import csv
+analysis-engine/detectors/type3/training/train_model.py:import json
+analysis-engine/detectors/type3/training/train_model.py:from pathlib import Path
+analysis-engine/detectors/type3/training/train_model.py:import numpy as np
+analysis-engine/detectors/type3/training/train_model.py:from sklearn.ensemble import RandomForestClassifier
+analysis-engine/detectors/type3/training/train_model.py:from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+analysis-engine/detectors/type3/training/train_model.py:from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
+analysis-engine/detectors/type3/training/train_model.py:import joblib
+analysis-engine/detectors/type3/training/train_model.py:def load_dataset(path: Path):
+analysis-engine/detectors/type3/training/train_model.py:def find_optimal_threshold(clf, X_val, y_val):
+analysis-engine/detectors/type3/training/train_model.py:def main():
+analysis-engine/detectors/type3/hybrid_detector.py:from __future__ import annotations
+analysis-engine/detectors/type3/hybrid_detector.py:import json
+analysis-engine/detectors/type3/hybrid_detector.py:import sys
+analysis-engine/detectors/type3/hybrid_detector.py:import time
+analysis-engine/detectors/type3/hybrid_detector.py:from collections import defaultdict
+analysis-engine/detectors/type3/hybrid_detector.py:from pathlib import Path
+analysis-engine/detectors/type3/hybrid_detector.py:from typing import Any, Dict, List, Optional, Tuple
+analysis-engine/detectors/type3/hybrid_detector.py:import joblib
+analysis-engine/detectors/type3/hybrid_detector.py:import numpy as np
+analysis-engine/detectors/type3/hybrid_detector.py:from core.tokenizer import CodeTokenizer
+analysis-engine/detectors/type3/hybrid_detector.py:from core.ast_processor import ASTProcessor
+analysis-engine/detectors/type3/hybrid_detector.py:from core.ast_ml_adapter import ASTMLAdapter
+analysis-engine/detectors/type3/hybrid_detector.py:from utils.metrics_calculator import MetricsCalculator
+analysis-engine/detectors/type3/hybrid_detector.py:from utils.frequency_filter import BatchFrequencyFilter
+analysis-engine/detectors/type3/hybrid_detector.py:from detectors.type3.winnowing import WinnowingDetector, WINNOWING_K
+analysis-engine/detectors/type3/hybrid_detector.py:from detectors.type3.config.extension_weights import get_pair_weight
+analysis-engine/detectors/type3/hybrid_detector.py:from detectors.type3.config.thresholds import get_thresholds, get_confidence
+analysis-engine/detectors/type3/hybrid_detector.py:from detectors.type3.fragment_extractor import FragmentExtractor, Fragment
+analysis-engine/detectors/type3/hybrid_detector.py:from detectors.type3.fragment_comparator import (
+analysis-engine/detectors/type3/hybrid_detector.py:from detectors.type3.normalizer import normalize_tokens
+analysis-engine/detectors/type3/hybrid_detector.py:from detectors.type3.lcs_comparator import get_matching_blocks
+analysis-engine/detectors/type3/hybrid_detector.py:from detectors.type3.clone_clusterer import CloneClusterer
+analysis-engine/detectors/type3/hybrid_detector.py:class Type3HybridDetector:
+analysis-engine/detectors/type3/hybrid_detector.py:class DetectionResultWrapper:
+analysis-engine/detectors/type3/model.py:import csv
+analysis-engine/detectors/type3/model.py:import json
+analysis-engine/detectors/type3/model.py:from pathlib import Path
+analysis-engine/detectors/type3/model.py:import numpy as np
+analysis-engine/detectors/type3/model.py:from sklearn.model_selection import train_test_split
+analysis-engine/detectors/type3/model.py:from sklearn.ensemble import RandomForestClassifier
+analysis-engine/detectors/type3/model.py:from sklearn.metrics import classification_report, confusion_matrix
+analysis-engine/detectors/type3/model.py:import joblib
+analysis-engine/detectors/type3/model.py:def load_dataset(path: Path):
+analysis-engine/detectors/type3/model.py:def main():
+analysis-engine/detectors/type3/structural_detector.py:from __future__ import annotations
+analysis-engine/detectors/type3/structural_detector.py:import time
+analysis-engine/detectors/type3/structural_detector.py:from pathlib import Path
+analysis-engine/detectors/type3/structural_detector.py:from typing import Dict, List, Optional, Tuple
+analysis-engine/detectors/type3/structural_detector.py:from detectors.type3.fragment_extractor import FragmentExtractor, Fragment
+analysis-engine/detectors/type3/structural_detector.py:from detectors.type3.fragment_comparator import (
+analysis-engine/detectors/type3/structural_detector.py:from detectors.type3.normalizer import normalize_tokens
+analysis-engine/detectors/type3/structural_detector.py:from detectors.type3.lcs_comparator import lcs_similarity, get_matching_blocks
+analysis-engine/detectors/type3/structural_detector.py:from detectors.type3.clone_clusterer import CloneClusterer
+analysis-engine/detectors/type3/structural_detector.py:class StructuralDetector:
+analysis-engine/detectors/type3/normalizer.py:from __future__ import annotations
+analysis-engine/detectors/type3/normalizer.py:import re
+analysis-engine/detectors/type3/normalizer.py:from typing import List, Dict
+analysis-engine/detectors/type3/normalizer.py:def normalize_tokens(tokens: List[str]) -> List[str]:
+analysis-engine/detectors/type3/normalizer.py:def structurally_normalize_tokens(tokens: List[str]) -> List[str]:
+analysis-engine/detectors/type3/lcs_comparator.py:from __future__ import annotations
+analysis-engine/detectors/type3/lcs_comparator.py:import difflib
+analysis-engine/detectors/type3/lcs_comparator.py:from typing import List, Tuple
+analysis-engine/detectors/type3/lcs_comparator.py:def lcs_similarity(tokens_a: List[str], tokens_b: List[str]) -> float:
+analysis-engine/detectors/type3/lcs_comparator.py:def lcs_dissimilarity(tokens_a: List[str], tokens_b: List[str]) -> float:
+analysis-engine/detectors/type3/lcs_comparator.py:def get_matching_blocks(
+analysis-engine/detectors/type3/clone_clusterer.py:from __future__ import annotations
+analysis-engine/detectors/type3/clone_clusterer.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type3/clone_clusterer.py:from typing import List, Dict, Set, Tuple, Any
+analysis-engine/detectors/type3/clone_clusterer.py:class _UnionFind:
+analysis-engine/detectors/type3/clone_clusterer.py:class CloneClass:
+analysis-engine/detectors/type3/clone_clusterer.py:class CloneClusterer:
+analysis-engine/detectors/type4/type4_detector.py:from __future__ import annotations
+analysis-engine/detectors/type4/type4_detector.py:import logging
+analysis-engine/detectors/type4/type4_detector.py:import shutil
+analysis-engine/detectors/type4/type4_detector.py:from pathlib import Path
+analysis-engine/detectors/type4/type4_detector.py:from typing import Any, Dict, List, Optional
+analysis-engine/detectors/type4/type4_detector.py:class Type4Detector:
+analysis-engine/detectors/type4/joern/docker/workspace/test.py:def factorial(n):
+analysis-engine/detectors/type4/joern/docker/workspace/test.py:def main():
+analysis-engine/detectors/type4/joern/config.py:import os
+analysis-engine/detectors/type4/joern/config.py:from pathlib import Path
+analysis-engine/detectors/type4/joern/config.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type4/joern/config.py:from typing import List, Optional, Dict
+analysis-engine/detectors/type4/joern/config.py:class DockerConfig:
+analysis-engine/detectors/type4/joern/config.py:class JoernConfig:
+analysis-engine/detectors/type4/joern/config.py:class SemanticConfig:
+analysis-engine/detectors/type4/joern/config.py:class PathConfig:
+analysis-engine/detectors/type4/joern/config.py:class Config:
+analysis-engine/detectors/type4/joern/config.py:def get_config() -> Config:
+analysis-engine/detectors/type4/joern/config.py:def get_docker_config() -> DockerConfig:
+analysis-engine/detectors/type4/joern/config.py:def get_joern_config() -> JoernConfig:
+analysis-engine/detectors/type4/joern/config.py:def get_semantic_config() -> SemanticConfig:
+analysis-engine/detectors/type4/joern/joern_detector.py:import logging
+analysis-engine/detectors/type4/joern/joern_detector.py:import time
+analysis-engine/detectors/type4/joern/joern_detector.py:from typing import Optional, List, Tuple, Dict, Any
+analysis-engine/detectors/type4/joern/joern_detector.py:from pathlib import Path
+analysis-engine/detectors/type4/joern/joern_detector.py:class JoernDetector:
+analysis-engine/detectors/type4/joern/joern_detector.py:def get_joern_detector(auto_start: bool = True) -> JoernDetector:
+analysis-engine/detectors/type4/joern/similarity_metrics.py:from collections import Counter
+analysis-engine/detectors/type4/joern/similarity_metrics.py:from typing import Dict, List, Set, Tuple
+analysis-engine/detectors/type4/joern/similarity_metrics.py:import numpy as np
+analysis-engine/detectors/type4/joern/similarity_metrics.py:from difflib import SequenceMatcher
+analysis-engine/detectors/type4/joern/similarity_metrics.py:import logging
+analysis-engine/detectors/type4/joern/similarity_metrics.py:class SimilarityMetrics:
+analysis-engine/detectors/type4/joern/similarity_metrics.py:def get_similarity_metrics() -> SimilarityMetrics:
+analysis-engine/detectors/type4/joern/joern_test.py:import sys
+analysis-engine/detectors/type4/joern/joern_test.py:import os
+analysis-engine/detectors/type4/joern/joern_test.py:import argparse
+analysis-engine/detectors/type4/joern/joern_test.py:import time
+analysis-engine/detectors/type4/joern/joern_test.py:from pathlib import Path
+analysis-engine/detectors/type4/joern/joern_test.py:class Colors:
+analysis-engine/detectors/type4/joern/joern_test.py:def print_header(text, char='='):
+analysis-engine/detectors/type4/joern/joern_test.py:def print_test_header(test_num, test_name, language, expected):
+analysis-engine/detectors/type4/joern/joern_test.py:def get_test_cases():
+analysis-engine/detectors/type4/joern/joern_test.py:def factorial(n):
+analysis-engine/detectors/type4/joern/joern_test.py:def factorial_iterative(num):
+analysis-engine/detectors/type4/joern/joern_test.py:def sum_list(numbers):
+analysis-engine/detectors/type4/joern/joern_test.py:def sum_list(numbers):
+analysis-engine/detectors/type4/joern/joern_test.py:def fibonacci(n):
+analysis-engine/detectors/type4/joern/joern_test.py:def fibonacci_dp(n):
+analysis-engine/detectors/type4/joern/joern_test.py:def bubble_sort(arr):
+analysis-engine/detectors/type4/joern/joern_test.py:def binary_search(arr, target):
+analysis-engine/detectors/type4/joern/joern_test.py:import java.util.ArrayList;
+analysis-engine/detectors/type4/joern/joern_test.py:class Stack {
+analysis-engine/detectors/type4/joern/joern_test.py:class Stack {
+analysis-engine/detectors/type4/joern/joern_test.py:class Stack {
+analysis-engine/detectors/type4/joern/joern_test.py:class Queue {
+analysis-engine/detectors/type4/joern/joern_test.py:def run_tests(detector, tests, verbose=False, language_filter=None):
+analysis-engine/detectors/type4/joern/joern_test.py:def print_summary(results, total_time):
+analysis-engine/detectors/type4/joern/joern_test.py:def main():
+analysis-engine/detectors/type4/joern/comparators/semantic_analyzer.py:from typing import List, Tuple, Dict, Set
+analysis-engine/detectors/type4/joern/comparators/semantic_analyzer.py:from collections import Counter
+analysis-engine/detectors/type4/joern/comparators/semantic_analyzer.py:class SemanticAnalyzer:
+analysis-engine/detectors/type4/joern/comparators/semantic_analyzer.py:def get_semantic_analyzer() -> SemanticAnalyzer:
+analysis-engine/detectors/type4/joern/comparators/__init__.py:from detectors.type4.joern.comparators.semantic_analyzer import (
+analysis-engine/detectors/type4/joern/comparators/wl_kernel.py:from __future__ import annotations
+analysis-engine/detectors/type4/joern/comparators/wl_kernel.py:import hashlib
+analysis-engine/detectors/type4/joern/comparators/wl_kernel.py:from collections import Counter
+analysis-engine/detectors/type4/joern/comparators/wl_kernel.py:from typing import Dict, List, Optional, Set, Tuple
+analysis-engine/detectors/type4/joern/comparators/wl_kernel.py:def _category(label: str) -> str:
+analysis-engine/detectors/type4/joern/comparators/wl_kernel.py:def _short_hash(s: str) -> str:
+analysis-engine/detectors/type4/joern/comparators/wl_kernel.py:class WLKernel:
+analysis-engine/detectors/type4/joern/comparators/wl_kernel.py:def get_wl_kernel(h: int = 3) -> WLKernel:
+analysis-engine/detectors/type4/joern/__init__.py:from detectors.type4.joern.joern_detector import JoernDetector, get_joern_detector
+analysis-engine/detectors/type4/joern/__init__.py:from detectors.type4.joern.client.joern_client import JoernClient, get_joern_client
+analysis-engine/detectors/type4/joern/__init__.py:from detectors.type4.joern.client.connection import (
+analysis-engine/detectors/type4/joern/__init__.py:from detectors.type4.joern.comparators.semantic_analyzer import (
+analysis-engine/detectors/type4/joern/__init__.py:from detectors.type4.joern.models.pdg_models import (
+analysis-engine/detectors/type4/joern/__init__.py:from detectors.type4.joern.models.semantic_result import (
+analysis-engine/detectors/type4/joern/__init__.py:from detectors.type4.joern.config import (
+analysis-engine/detectors/type4/joern/models/__init__.py:from detectors.type4.joern.models.pdg_models import (
+analysis-engine/detectors/type4/joern/models/__init__.py:from detectors.type4.joern.models.semantic_result import (
+analysis-engine/detectors/type4/joern/models/semantic_result.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type4/joern/models/semantic_result.py:from typing import Optional, Dict, List, Any
+analysis-engine/detectors/type4/joern/models/semantic_result.py:from enum import Enum
+analysis-engine/detectors/type4/joern/models/semantic_result.py:from datetime import datetime
+analysis-engine/detectors/type4/joern/models/semantic_result.py:class ConfidenceLevel(Enum):
+analysis-engine/detectors/type4/joern/models/semantic_result.py:class SemanticScores:
+analysis-engine/detectors/type4/joern/models/semantic_result.py:class PDGInfo:
+analysis-engine/detectors/type4/joern/models/semantic_result.py:class SemanticCloneResult:
+analysis-engine/detectors/type4/joern/models/semantic_result.py:class BatchSemanticResult:
+analysis-engine/detectors/type4/joern/models/pdg_models.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type4/joern/models/pdg_models.py:from typing import List, Dict, Optional, Set, Any
+analysis-engine/detectors/type4/joern/models/pdg_models.py:from enum import Enum
+analysis-engine/detectors/type4/joern/models/pdg_models.py:class EdgeType(Enum):
+analysis-engine/detectors/type4/joern/models/pdg_models.py:class NodeType(Enum):
+analysis-engine/detectors/type4/joern/models/pdg_models.py:class PDGNode:
+analysis-engine/detectors/type4/joern/models/pdg_models.py:class PDGEdge:
+analysis-engine/detectors/type4/joern/models/pdg_models.py:class ControlEdge(PDGEdge):
+analysis-engine/detectors/type4/joern/models/pdg_models.py:class DataEdge(PDGEdge):
+analysis-engine/detectors/type4/joern/models/pdg_models.py:class MethodPDG:
+analysis-engine/detectors/type4/joern/models/pdg_models.py:class PDG:
+analysis-engine/detectors/type4/joern/ML/cobert_integration.py:import logging
+analysis-engine/detectors/type4/joern/ML/cobert_integration.py:from typing import Optional, Dict, Tuple
+analysis-engine/detectors/type4/joern/ML/cobert_integration.py:import numpy as np
+analysis-engine/detectors/type4/joern/ML/cobert_integration.py:class CodeBERTIntegration:
+analysis-engine/detectors/type4/joern/ML/cobert_integration.py:def get_codebert_integration() -> CodeBERTIntegration:
+analysis-engine/detectors/type4/joern/ML/cobert_integration.py:def is_codebert_available() -> bool:
+analysis-engine/detectors/type4/joern/feature_extractor.py:from collections import Counter, defaultdict
+analysis-engine/detectors/type4/joern/feature_extractor.py:from typing import Dict, List, Set, Tuple, Optional
+analysis-engine/detectors/type4/joern/feature_extractor.py:import re
+analysis-engine/detectors/type4/joern/feature_extractor.py:import logging
+analysis-engine/detectors/type4/joern/feature_extractor.py:class FeatureExtractor:
+analysis-engine/detectors/type4/joern/feature_extractor.py:def get_feature_extractor() -> FeatureExtractor:
+analysis-engine/detectors/type4/joern/pre_filter.py:import re
+analysis-engine/detectors/type4/joern/pre_filter.py:from typing import Set, Tuple
+analysis-engine/detectors/type4/joern/pre_filter.py:import logging
+analysis-engine/detectors/type4/joern/pre_filter.py:class SemanticPreFilter:
+analysis-engine/detectors/type4/joern/pre_filter.py:def get_pre_filter(threshold: float = 0.30) -> SemanticPreFilter:
+analysis-engine/detectors/type4/joern/ensemble_classifier.py:from typing import Dict, Tuple, Optional
+analysis-engine/detectors/type4/joern/ensemble_classifier.py:import numpy as np
+analysis-engine/detectors/type4/joern/ensemble_classifier.py:import logging
+analysis-engine/detectors/type4/joern/ensemble_classifier.py:class EnsembleClassifier:
+analysis-engine/detectors/type4/joern/ensemble_classifier.py:def get_ensemble_classifier(
+analysis-engine/detectors/type4/joern/client/__init__.py:from detectors.type4.joern.client.joern_client import JoernClient, get_joern_client
+analysis-engine/detectors/type4/joern/client/__init__.py:from detectors.type4.joern.client.connection import (
+analysis-engine/detectors/type4/joern/client/connection.py:import subprocess
+analysis-engine/detectors/type4/joern/client/connection.py:import time
+analysis-engine/detectors/type4/joern/client/connection.py:import logging
+analysis-engine/detectors/type4/joern/client/connection.py:from typing import Optional, Tuple
+analysis-engine/detectors/type4/joern/client/connection.py:from pathlib import Path
+analysis-engine/detectors/type4/joern/client/connection.py:class DockerConnectionError(Exception):
+analysis-engine/detectors/type4/joern/client/connection.py:class JoernContainerManager:
+analysis-engine/detectors/type4/joern/client/connection.py:def get_container_manager() -> JoernContainerManager:
+analysis-engine/detectors/type4/joern/client/joern_client.py:import logging
+analysis-engine/detectors/type4/joern/client/joern_client.py:import time
+analysis-engine/detectors/type4/joern/client/joern_client.py:from typing import Optional, Dict, Any
+analysis-engine/detectors/type4/joern/client/joern_client.py:from pathlib import Path
+analysis-engine/detectors/type4/joern/client/joern_client.py:import tempfile
+analysis-engine/detectors/type4/joern/client/joern_client.py:class JoernClient:
+analysis-engine/detectors/type4/joern/client/joern_client.py:def get_joern_client(auto_start: bool = True) -> JoernClient:
+analysis-engine/detectors/type4/__init__.py:from detectors.type4.type4_detector import Type4Detector
+analysis-engine/detectors/type4/educational/io_executor.py:from __future__ import annotations
+analysis-engine/detectors/type4/educational/io_executor.py:import logging
+analysis-engine/detectors/type4/educational/io_executor.py:import os
+analysis-engine/detectors/type4/educational/io_executor.py:import re
+analysis-engine/detectors/type4/educational/io_executor.py:import shutil
+analysis-engine/detectors/type4/educational/io_executor.py:import subprocess
+analysis-engine/detectors/type4/educational/io_executor.py:import tempfile
+analysis-engine/detectors/type4/educational/io_executor.py:from dataclasses import dataclass
+analysis-engine/detectors/type4/educational/io_executor.py:from pathlib import Path
+analysis-engine/detectors/type4/educational/io_executor.py:from typing import List, Optional
+analysis-engine/detectors/type4/educational/io_executor.py:class ExecutionResult:
+analysis-engine/detectors/type4/educational/io_executor.py:class CompileResult:
+analysis-engine/detectors/type4/educational/io_executor.py:def _normalize_output(raw: str) -> str:
+analysis-engine/detectors/type4/educational/io_executor.py:class IOExecutor:
+analysis-engine/detectors/type4/educational/io_executor.py:def make_work_dir(prefix: str = "cs_io_") -> str:
+analysis-engine/detectors/type4/educational/io_executor.py:def cleanup_work_dir(work_dir: str) -> None:
+analysis-engine/detectors/type4/educational/io_executor.py:def get_executor() -> IOExecutor:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:from __future__ import annotations
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:import logging
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:import re
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:from pathlib import Path
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:from typing import Any, Dict, List, Optional, Tuple
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:class ClassificationResult:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:def _detect_sort_family(source: str) -> Tuple[str, float]:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:def _detect_search_family(source: str) -> Tuple[str, float]:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:def _detect_fibonacci_family(source: str) -> Tuple[str, float]:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:def _detect_gcd_family(source: str) -> Tuple[str, float]:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:def _find_class_name(source: str) -> str:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:def _find_struct_name(source: str) -> str:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:def _detect_stack_methods(source: str) -> Dict[str, str]:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:def _detect_linked_list_methods(source: str) -> Dict[str, str]:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:def _keyword_score(source_lower: str, keywords: set) -> float:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:class AlgorithmClassifier:
+analysis-engine/detectors/type4/educational/algorithm_classifier.py:def get_classifier() -> AlgorithmClassifier:
+analysis-engine/detectors/type4/educational/educational_detector.py:from __future__ import annotations
+analysis-engine/detectors/type4/educational/educational_detector.py:import logging
+analysis-engine/detectors/type4/educational/educational_detector.py:import time
+analysis-engine/detectors/type4/educational/educational_detector.py:from pathlib import Path
+analysis-engine/detectors/type4/educational/educational_detector.py:from typing import Any, Dict, List, Optional
+analysis-engine/detectors/type4/educational/educational_detector.py:from .algorithm_classifier import get_classifier, ClassificationResult
+analysis-engine/detectors/type4/educational/educational_detector.py:from .io_behavioral_tester import get_tester, IOBehavioralResult
+analysis-engine/detectors/type4/educational/educational_detector.py:from .score_fusion import FusionInput, FusionResult, fuse_scores
+analysis-engine/detectors/type4/educational/educational_detector.py:class EducationalType4Detector:
+analysis-engine/detectors/type4/educational/__init__.py:from .educational_detector import EducationalType4Detector
+analysis-engine/detectors/type4/educational/__init__.py:from .algorithm_classifier import AlgorithmClassifier, get_classifier, ClassificationResult
+analysis-engine/detectors/type4/educational/__init__.py:from .io_behavioral_tester import IOBehavioralTester, get_tester, IOBehavioralResult
+analysis-engine/detectors/type4/educational/__init__.py:from .score_fusion import FusionInput, FusionResult, fuse_scores
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:from __future__ import annotations
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:import logging
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:import re
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:import shutil
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:from pathlib import Path
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:from typing import Dict, List, Optional, Tuple
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:from .algorithm_classifier import (
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:from .io_executor import (
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:from .problem_bank.harness_templates import get_harness_template
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:from .problem_bank.registry import ProblemCategory, get_registry
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:def _rename_student_main_cpp(source: str) -> str:
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:def _rename_student_main_python(source: str) -> str:
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:def _build_cpp_harness(
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:def _build_python_harness(
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:def _find_init_func(source: str) -> Optional[str]:
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:class IOBehavioralResult:
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:class IOBehavioralTester:
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:def _normalize_expected(expected: str) -> str:
+analysis-engine/detectors/type4/educational/io_behavioral_tester.py:def get_tester() -> IOBehavioralTester:
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:from typing import Dict
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:import sys
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:def __cs_main__():
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:import sys
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:def __cs_main__():
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:import sys
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:def __cs_main__():
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:import sys
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:def __cs_main__():
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:class __CSHarness__ {
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:class __CSHarness__ {
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:class __CSHarness__ {
+analysis-engine/detectors/type4/educational/problem_bank/harness_templates.py:def get_harness_template(category: str, language: str) -> str | None:
+analysis-engine/detectors/type4/educational/problem_bank/registry.py:from __future__ import annotations
+analysis-engine/detectors/type4/educational/problem_bank/registry.py:import logging
+analysis-engine/detectors/type4/educational/problem_bank/registry.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type4/educational/problem_bank/registry.py:from typing import Dict, List, Optional, Tuple
+analysis-engine/detectors/type4/educational/problem_bank/registry.py:from .test_cases import (
+analysis-engine/detectors/type4/educational/problem_bank/registry.py:class ProblemCategory:
+analysis-engine/detectors/type4/educational/problem_bank/registry.py:class ProblemRegistry:
+analysis-engine/detectors/type4/educational/problem_bank/registry.py:def get_registry() -> ProblemRegistry:
+analysis-engine/detectors/type4/educational/problem_bank/__init__.py:from .registry import ProblemRegistry, get_registry
+analysis-engine/detectors/type4/educational/problem_bank/test_cases.py:from typing import List, Tuple
+analysis-engine/detectors/type4/educational/score_fusion.py:from __future__ import annotations
+analysis-engine/detectors/type4/educational/score_fusion.py:import logging
+analysis-engine/detectors/type4/educational/score_fusion.py:from dataclasses import dataclass
+analysis-engine/detectors/type4/educational/score_fusion.py:from typing import Optional
+analysis-engine/detectors/type4/educational/score_fusion.py:class FusionInput:
+analysis-engine/detectors/type4/educational/score_fusion.py:class FusionResult:
+analysis-engine/detectors/type4/educational/score_fusion.py:def fuse_scores(
+analysis-engine/detectors/type4/educational/score_fusion.py:def _determine_confidence(
+analysis-engine/detectors/type4/educational/score_fusion.py:def _build_interpretation(
+analysis-engine/detectors/type4/custom_pdg/pdg_builder.py:import re
+analysis-engine/detectors/type4/custom_pdg/pdg_builder.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type4/custom_pdg/pdg_builder.py:from typing import List, Dict, Set, Optional, Any, Tuple
+analysis-engine/detectors/type4/custom_pdg/pdg_builder.py:from pathlib import Path
+analysis-engine/detectors/type4/custom_pdg/pdg_builder.py:class PDGNode:
+analysis-engine/detectors/type4/custom_pdg/pdg_builder.py:class PDGEdge:
+analysis-engine/detectors/type4/custom_pdg/pdg_builder.py:class SimplifiedPDG:
+analysis-engine/detectors/type4/custom_pdg/pdg_builder.py:class LanguagePatterns:
+analysis-engine/detectors/type4/custom_pdg/pdg_builder.py:class PDGBuilder:
+analysis-engine/detectors/type4/custom_pdg/semantic_features.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type4/custom_pdg/semantic_features.py:from typing import List, Dict, Set, Tuple
+analysis-engine/detectors/type4/custom_pdg/semantic_features.py:from collections import Counter
+analysis-engine/detectors/type4/custom_pdg/semantic_features.py:import numpy as np
+analysis-engine/detectors/type4/custom_pdg/semantic_features.py:from .pdg_builder import SimplifiedPDG, PDGNode
+analysis-engine/detectors/type4/custom_pdg/semantic_features.py:class SemanticFeatures:
+analysis-engine/detectors/type4/custom_pdg/semantic_features.py:class SemanticFeatureExtractor:
+analysis-engine/detectors/type4/custom_pdg/similarity.py:from typing import Dict, Tuple
+analysis-engine/detectors/type4/custom_pdg/similarity.py:from dataclasses import dataclass
+analysis-engine/detectors/type4/custom_pdg/similarity.py:class SimilarityWeights:
+analysis-engine/detectors/type4/custom_pdg/similarity.py:class PDGSimilarity:
+analysis-engine/detectors/type4/custom_pdg/similarity.py:class SimilarityResult:
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:from typing import List, Dict, Any, Optional
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:from pathlib import Path
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:from dataclasses import dataclass, field
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:import time
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:from .pdg_builder import PDGBuilder, SimplifiedPDG
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:from .semantic_features import SemanticFeatureExtractor, SemanticFeatures
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:from .similarity import PDGSimilarity, SimilarityResult, SimilarityWeights
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:class Type4DetectionResult:
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:class Type4BatchResult:
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:class Type4PDGDetector:
+analysis-engine/detectors/type4/custom_pdg/pdg_detector.py:class Type4ResultWrapper:
+analysis-engine/detectors/type4/custom_pdg/__init__.py:from .pdg_detector import Type4PDGDetector, Type4ResultWrapper
+analysis-engine/main.py:import asyncio
+analysis-engine/main.py:import shutil
+analysis-engine/main.py:import time
+analysis-engine/main.py:import uuid
+analysis-engine/main.py:from concurrent.futures import ThreadPoolExecutor
+analysis-engine/main.py:from pathlib import Path
+analysis-engine/main.py:from typing import Any, Dict, List, Optional
+analysis-engine/main.py:from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+analysis-engine/main.py:from fastapi.middleware.cors import CORSMiddleware
+analysis-engine/main.py:from pydantic import BaseModel
+analysis-engine/main.py:from fastapi.responses import StreamingResponse
+analysis-engine/main.py:import io
+analysis-engine/main.py:from engine.analyzer import CloneAnalyzer, AnalyzerConfig
+analysis-engine/main.py:from engine.report_generator import ReportGenerator
+analysis-engine/main.py:from utils.zip_extractor import ZipExtractor
+analysis-engine/main.py:class StudentSubmission(BaseModel):
+analysis-engine/main.py:class AssignmentAnalysisRequest(BaseModel):
+analysis-engine/main.py:def cleanup(job_dir: Path) -> None:
+analysis-engine/main.py:def _run_assignment_analysis(job_id: str, request: AssignmentAnalysisRequest) -> None:
+analysis-engine/main.py:def root():
+analysis-engine/main.py:def health():
+analysis-engine/main.py:def get_job_results(job_id: str):
+analysis-engine/main.py:def generate_csv_from_job(
+analysis-engine/engine/analyzer.py:from typing import List, Dict, Any, Optional, Tuple
+analysis-engine/engine/analyzer.py:from pathlib import Path
+analysis-engine/engine/analyzer.py:from dataclasses import dataclass, field
+analysis-engine/engine/analyzer.py:import time
+analysis-engine/engine/analyzer.py:import sys
+analysis-engine/engine/analyzer.py:class AnalyzerConfig:
+analysis-engine/engine/analyzer.py:class StructuralDetails:
+analysis-engine/engine/analyzer.py:class SemanticDetails:
+analysis-engine/engine/analyzer.py:class StructuralResult:
+analysis-engine/engine/analyzer.py:class SemanticResult:
+analysis-engine/engine/analyzer.py:class PairResult:
+analysis-engine/engine/analyzer.py:class ClassAnalysis:
+analysis-engine/engine/analyzer.py:def _get_lang(path: str) -> str:
+analysis-engine/engine/analyzer.py:def build_same_language_pairs(file_paths: List[str]) -> List[Tuple[str, str]]:
+analysis-engine/engine/analyzer.py:class CloneAnalyzer:
+analysis-engine/engine/__init__.py:from .analyzer import CloneAnalyzer, AnalyzerConfig
+analysis-engine/engine/boilerplate_stripper.py:from __future__ import annotations
+analysis-engine/engine/boilerplate_stripper.py:import re
+analysis-engine/engine/boilerplate_stripper.py:from pathlib import Path
+analysis-engine/engine/boilerplate_stripper.py:def strip_boilerplate(source: str, ext: str) -> str:
+analysis-engine/engine/boilerplate_stripper.py:def strip_file(path: str | Path) -> str:
+analysis-engine/engine/report_generator.py:from __future__ import annotations
+analysis-engine/engine/report_generator.py:import csv
+analysis-engine/engine/report_generator.py:import io
+analysis-engine/engine/report_generator.py:import uuid
+analysis-engine/engine/report_generator.py:from datetime import datetime
+analysis-engine/engine/report_generator.py:from pathlib import Path
+analysis-engine/engine/report_generator.py:from typing import Any, Dict, List, Optional
+analysis-engine/engine/report_generator.py:def _pct(v: Optional[float]) -> str:
+analysis-engine/engine/report_generator.py:def _safe(v: Any, default: str = "") -> str:
+analysis-engine/engine/report_generator.py:def _rec(clone_type: str, confidence: str) -> str:
+analysis-engine/engine/report_generator.py:def _basename(path_str: str) -> str:
+analysis-engine/engine/report_generator.py:class ReportGenerator:
+analysis-engine/services/upload_service.py:import os
+analysis-engine/services/upload_service.py:import zipfile
+analysis-engine/services/upload_service.py:import shutil
+analysis-engine/services/upload_service.py:from pathlib import Path
+analysis-engine/services/upload_service.py:from typing import List, Dict, Optional, Tuple
+analysis-engine/services/upload_service.py:from dataclasses import dataclass
+analysis-engine/services/upload_service.py:import hashlib
+analysis-engine/services/upload_service.py:import magic  # For file type detection
+analysis-engine/services/upload_service.py:class UploadedFile:
+analysis-engine/services/upload_service.py:class LanguageDetector:
+analysis-engine/services/upload_service.py:class FileUploadService:
+analysis-engine/services/queue_manager.py:import asyncio
+analysis-engine/services/queue_manager.py:import time
+analysis-engine/services/queue_manager.py:from typing import List, Dict, Optional
+analysis-engine/services/queue_manager.py:from dataclasses import dataclass, field
+analysis-engine/services/queue_manager.py:from datetime import datetime
+analysis-engine/services/queue_manager.py:import json
+analysis-engine/services/queue_manager.py:class AnalysisJob:
+analysis-engine/services/queue_manager.py:class AnalysisQueueManager:
+analysis-engine/services/analysis_service.py:import psycopg2
+analysis-engine/services/analysis_service.py:import os
+analysis-engine/services/analysis_service.py:from detectors.type3.hybrid_detector import Type3HybridDetector
+analysis-engine/services/analysis_service.py:from config.database import get_db_connection # Assuming you have this based on your structure
+analysis-engine/services/analysis_service.py:class AnalysisService:

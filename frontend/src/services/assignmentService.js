@@ -1,8 +1,6 @@
 import api from '../utils/api';
 
 const assignmentService = {
-  // ========== ASSIGNMENT CRUD ==========
-
   async createAssignment(assignmentData) {
     const response = await api.post('/assignments', assignmentData);
     return response.data;
@@ -33,8 +31,6 @@ const assignmentService = {
     return response.data;
   },
 
-  // ========== QUESTION MANAGEMENT ==========
-
   async getQuestionById(questionId) {
     const response = await api.get(`/assignments/questions/${questionId}`);
     return response.data;
@@ -55,25 +51,23 @@ const assignmentService = {
     return response.data;
   },
 
-  // ========== HELPER FUNCTIONS ==========
-
+  // Returns the default file extensions we allow for a given primary language.
   getExtensionsForLanguage(language) {
     const extensionMap = {
-      'cpp': ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx'],
-      'c': ['.c', '.h'],
-      'java': ['.java'],
-      'python': ['.py'],
-      'javascript': ['.js', '.jsx', '.ts', '.tsx'],
-      'mixed': ['.cpp', '.c', '.h', '.java', '.py', '.js']
+      cpp:        ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx'],
+      c:          ['.c', '.h'],
+      java:       ['.java'],
+      python:     ['.py'],
+      javascript: ['.js', '.jsx', '.ts', '.tsx'],
+      mixed:      ['.cpp', '.c', '.h', '.java', '.py', '.js'],
     };
-    
-    return extensionMap[language] || extensionMap['mixed'];
+    return extensionMap[language] || extensionMap.mixed;
   },
 
   formatExtensionsDisplay(extensions) {
     if (!extensions || extensions.length === 0) return 'Any file type';
     return extensions.join(', ');
-  }
+  },
 };
 
 export default assignmentService;

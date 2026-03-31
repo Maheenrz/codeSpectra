@@ -1,24 +1,26 @@
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : 'http://localhost:3000/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
 });
 
-// Request interceptor to add auth token
+// Attach the JWT token on every request if one is stored.
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+    return config;
   },
+  (error) => Promise.reject(error)
+);
 
-// Response interceptor for error handling
+// If the server returns 401, the token is expired or invalid.
+// Clear local storage and redirect to login.
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -27,5 +29,8 @@ api.interceptors.response.use(
       localStorage.removeItem('user');
       window.location.href = '/login';
     }
+    return Promise.reject(error);
   }
-};
+);
+
+export default api;

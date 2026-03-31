@@ -6,8 +6,7 @@ services:
   # ==========================================
   # DATABASE LAYER
   # ==========================================
-  
-  # PostgreSQL Database
+
   postgresql:
     image: postgres:14-alpine
     container_name: codespectra_postgres
@@ -15,7 +14,7 @@ services:
     environment:
       POSTGRES_DB: ${DB_NAME:-codespectra_db}
       POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres123}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-kasa123}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
@@ -29,9 +28,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      
 
-  # pgAdmin - Database Management UI
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: codespectra_pgadmin
@@ -49,9 +46,8 @@ services:
     depends_on:
       - postgresql
 
-  # Redis (for caching & sessions)
   redis:
-    image: redis:7-alpine
+    image: redis:alpine
     container_name: codespectra_redis
     restart: unless-stopped
     ports:
@@ -70,7 +66,6 @@ services:
   # APPLICATION LAYER
   # ==========================================
 
-  # Node.js Backend (API Gateway)
   backend:
     build:
       context: ./backend
@@ -82,12 +77,13 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 3000
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres123}@postgresql:5432/${DB_NAME:-codespectra_db}
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-kasa123}@postgresql:5432/${DB_NAME:-codespectra_db}
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       ANALYSIS_ENGINE_URL: http://analysis-engine:5000
       MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-10}
+      ANALYSIS_ENGINE_UPLOADS_BASE: /app/uploads
     depends_on:
       postgresql:
         condition: service_healthy
@@ -100,7 +96,6 @@ services:
     networks:
       - codespectra_network
 
-  # Python Analysis Engine
   analysis-engine:
     build:
       context: ./analysis-engine
@@ -111,23 +106,25 @@ services:
       - "${ANALYSIS_PORT:-5000}:5000"
     environment:
       PYTHONUNBUFFERED: 1
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres123}@postgresql:5432/${DB_NAME:-codespectra_db}
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-kasa123}@postgresql:5432/${DB_NAME:-codespectra_db}
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      VICORN_TIMEOUT_KEEP_ALIVE: "300"
+      UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN: "300"
     depends_on:
       postgresql:
         condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
-    - ./analysis-engine:/app
-    - analysis_workspace:/workspace
-    - ./backend/uploads:/app/uploads
-    - /var/run/docker.sock:/var/run/docker.sock
+      - ./analysis-engine:/app
+      - analysis_workspace:/workspace
+      - analysis_cache:/app/.cache
+      - ./backend/uploads:/app/uploads
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - codespectra_network
 
-  # React Frontend (Development)
   frontend:
     build:
       context: ./frontend
@@ -152,13 +149,10 @@ services:
 # ==========================================
 volumes:
   postgres_data:
-    driver: local
   pgadmin_data:
-    driver: local
   redis_data:
-    driver: local
   analysis_workspace:
-    driver: local
+  analysis_cache:
 
 # ==========================================
 # NETWORKS

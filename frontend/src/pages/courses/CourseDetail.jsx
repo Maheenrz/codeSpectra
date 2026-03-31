@@ -1,299 +1,458 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import courseService from '../../services/courseService';  // ⭐ ADD THIS IMPORT
+import courseService from '../../services/courseService';
 import assignmentService from '../../services/assignmentService';
-import LoadingSpinner from '../../components/common/LoadingSpinner';
-import Card from '../../components/common/Card';
+import PageLoader from '../../Components/common/PageLoader';
+
+const IconBack = () => (
+  <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+);
+
+// ── Minimalist vectors ────────────────────────────────────────────────────────
+
+const EmptyAssignmentVector = () => (
+  <svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="mx-auto mb-5 opacity-70">
+    <rect x="18" y="12" width="64" height="76" rx="7" stroke="#CF7249" strokeWidth="2.2" fill="#FEF3EC"/>
+    <line x1="30" y1="34" x2="70" y2="34" stroke="#CF7249" strokeWidth="2" strokeLinecap="round"/>
+    <line x1="30" y1="46" x2="62" y2="46" stroke="#E8D5C8" strokeWidth="2" strokeLinecap="round"/>
+    <line x1="30" y1="58" x2="55" y2="58" stroke="#E8D5C8" strokeWidth="2" strokeLinecap="round"/>
+    <circle cx="72" cy="72" r="15" fill="#CF7249"/>
+    <line x1="72" y1="65" x2="72" y2="79" stroke="white" strokeWidth="2.5" strokeLinecap="round"/>
+    <line x1="65" y1="72" x2="79" y2="72" stroke="white" strokeWidth="2.5" strokeLinecap="round"/>
+  </svg>
+);
+
+const EmptyStudentsVector = () => (
+  <svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="mx-auto mb-5 opacity-70">
+    <circle cx="50" cy="36" r="16" stroke="#CF7249" strokeWidth="2.2" fill="#FEF3EC"/>
+    <path d="M18 82c0-17.673 14.327-32 32-32s32 14.327 32 32" stroke="#CF7249" strokeWidth="2.2" strokeLinecap="round" fill="none"/>
+    <circle cx="78" cy="38" r="10" stroke="#E8D5C8" strokeWidth="1.8" fill="white"/>
+    <path d="M63 66c4-5 9-8 15-8" stroke="#E8D5C8" strokeWidth="1.8" strokeLinecap="round"/>
+  </svg>
+);
+
+// Marker-hand style — "page not found"
+const NotFoundVector = () => (
+  <svg width="130" height="130" viewBox="0 0 130 130" fill="none" xmlns="http://www.w3.org/2000/svg" className="mx-auto mb-6 opacity-60">
+    {/* Notebook */}
+    <rect x="24" y="20" width="82" height="90" rx="9" stroke="#CF7249" strokeWidth="2.5" fill="white"/>
+    <rect x="24" y="20" width="18" height="90" rx="6" fill="#FEF3EC" stroke="#CF7249" strokeWidth="2.5"/>
+    {/* Spiral binding dots */}
+    <circle cx="33" cy="38" r="3" fill="#CF7249"/>
+    <circle cx="33" cy="56" r="3" fill="#CF7249"/>
+    <circle cx="33" cy="74" r="3" fill="#CF7249"/>
+    <circle cx="33" cy="92" r="3" fill="#CF7249"/>
+    {/* Lines on page */}
+    <line x1="52" y1="44" x2="90" y2="44" stroke="#E8D5C8" strokeWidth="2" strokeLinecap="round"/>
+    <line x1="52" y1="56" x2="84" y2="56" stroke="#E8D5C8" strokeWidth="2" strokeLinecap="round"/>
+    {/* Big ? */}
+    <text x="56" y="94" fontFamily="Georgia, serif" fontSize="36" fontWeight="700" fill="#CF7249" opacity="0.35">?</text>
+    {/* Marker squiggle at bottom */}
+    <path d="M40 114 Q55 108 70 114 Q85 120 100 114" stroke="#CF7249" strokeWidth="2" strokeLinecap="round" fill="none" opacity="0.3"/>
+  </svg>
+);
+
+// ── Duplicate warning badge in the assignment list ──────────────────────────
+const DuplicateWarning = ({ count }) => (
+  <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 mb-3">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+    <p className="text-xs text-amber-700 leading-relaxed">
+      <strong>{count} duplicate assignment title{count > 1 ? 's' : ''} detected.</strong>{' '}
+      Use the <span className="font-semibold text-red-600">delete icon</span> on duplicate cards to remove them.
+    </p>
+  </div>
+);
+
+// ── Helper: normalise whatever shape the backend returns ──────────────────────
+const normaliseCourse = (raw) => {
+  if (!raw) return null;
+  // unwrap { course: {...} } or { data: {...} }
+  const c = raw?.course ?? raw?.data ?? raw;
+  if (!c || typeof c !== 'object') return null;
+  return {
+    ...c,
+    // accept any common field name for the primary key
+    course_id: c.course_id ?? c.id ?? c.courseId ?? null,
+  };
+};
+
+// ── Retry fetcher — handles race-condition for newly created courses ───────────
+const fetchWithRetry = async (fn, maxAttempts = 3, delay = 900) => {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await fn();
+      return result;
+    } catch (err) {
+      if (attempt === maxAttempts) throw err;
+      await new Promise(r => setTimeout(r, delay * attempt)); // 900ms, 1800ms
+    }
+  }
+};
+
+// ── Detect duplicate titles ────────────────────────────────────────────────────
+const findDuplicateTitles = (list) => {
+  const seen = {};
+  list.forEach(a => {
+    const t = (a.title || '').trim().toLowerCase();
+    seen[t] = (seen[t] || 0) + 1;
+  });
+  return Object.values(seen).filter(n => n > 1).reduce((a, b) => a + b - 1, 0);
+};
 
 const CourseDetail = () => {
   const { courseId } = useParams();
-  const navigate = useNavigate();
-  const { isInstructor } = useAuth();
-  const [course, setCourse] = useState(null);
+  const { user, isInstructor } = useAuth();
+  const [course, setCourse]           = useState(null);
   const [assignments, setAssignments] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [activeTab, setActiveTab] = useState('assignments');
-  const [loading, setLoading] = useState(true);
-  const [regenerating, setRegenerating] = useState(false);  // ⭐ ADD THIS
+  const [students, setStudents]       = useState([]);
+  const [activeTab, setActiveTab]     = useState('assignments');
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState('');
+  const [regenerating, setRegenerating] = useState(false);
+  const [copied, setCopied]           = useState(false);
+  const [deletingId, setDeletingId]   = useState(null);
 
-  useEffect(() => {
-    fetchCourseData();
-  }, [courseId]);
+  useEffect(() => { fetchData(); }, [courseId]);
 
-  const fetchCourseData = async () => {
+  const fetchData = async () => {
+    setCourse(null);
+    setAssignments([]);
+    setStudents([]);
+    setLoading(true);
+    setError('');
+
     try {
-      const [courseData, assignmentsData] = await Promise.all([
-        courseService.getCourseById(courseId),
-        assignmentService.getCourseAssignments(courseId),
-      ]);
-      
-      setCourse(courseData);
-      setAssignments(assignmentsData);
+      // Retry handles race-condition right after course creation
+      const rawCourse = await fetchWithRetry(
+        () => courseService.getCourseById(courseId),
+        3,
+        800,
+      );
 
-      if (isInstructor) {
-        const studentsData = await courseService.getCourseStudents(courseId);
-        setStudents(studentsData);
+      const normalizedCourse = normaliseCourse(rawCourse);
+
+      if (!normalizedCourse?.course_id) {
+        setError('Course not found.');
+        setLoading(false);
+        return;
       }
-    } catch (error) {
-      console.error('Error fetching course:', error);
+      setCourse(normalizedCourse);
+
+      // Assignments — failure here must NOT break the page
+      try {
+        const assignmentsData = await assignmentService.getCourseAssignments(
+          normalizedCourse.course_id,
+        );
+        setAssignments(Array.isArray(assignmentsData) ? assignmentsData : []);
+      } catch {
+        setAssignments([]);
+      }
+
+      // Students — instructor only
+      if (isInstructor) {
+        try {
+          const s = await courseService.getCourseStudents(normalizedCourse.course_id);
+          setStudents(Array.isArray(s) ? s : []);
+        } catch {
+          setStudents([]);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      setError('Course not found or you do not have access.');
     } finally {
       setLoading(false);
     }
   };
 
-  // ⭐ ADD THIS FUNCTION
-  const handleRegenerateCode = async () => {
-    if (!window.confirm('Generate a new join code? The old code will stop working.')) return;
-    
-    setRegenerating(true);
-    try {
-      const result = await courseService.regenerateJoinCode(courseId);
-      setCourse({ ...course, join_code: result.joinCode });
-      alert('✅ New join code generated!');
-    } catch (error) {
-      console.error('Regenerate error:', error);
-      alert('❌ Failed to regenerate code: ' + (error.response?.data?.error || error.message));
-    } finally {
-      setRegenerating(false);
-    }
-  };
-
-  // ⭐ ADD THIS FUNCTION
   const handleCopyCode = () => {
     if (course?.join_code) {
       navigator.clipboard.writeText(course.join_code);
-      alert('✅ Join code copied to clipboard!');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
-  if (loading) return <LoadingSpinner message="Loading course..." />;
-  if (!course) return <div>Course not found</div>;
+  const handleRegenerateCode = async () => {
+    if (!window.confirm('Generate a new join code? The old code will stop working.')) return;
+    setRegenerating(true);
+    try {
+      const result = await courseService.regenerateJoinCode(courseId);
+      setCourse(c => ({ ...c, join_code: result.joinCode }));
+    } catch (e) { console.error(e); }
+    finally { setRegenerating(false); }
+  };
+
+  const handleDeleteAssignment = async (e, assignmentId, title) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!window.confirm(`Delete "${title}"?\n\nThis cannot be undone and will remove all associated submissions.`)) return;
+    setDeletingId(assignmentId);
+    try {
+      await assignmentService.deleteAssignment(assignmentId);
+      setAssignments(prev => prev.filter(a => (a.assignment_id ?? a.id) !== assignmentId));
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to delete assignment.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  if (loading) return <PageLoader message="Loading course…" />;
+
+  if (error || !course) return (
+    <div className="min-h-screen bg-[#F7F3EE] flex flex-col items-center justify-center gap-3 px-6 text-center">
+      <NotFoundVector />
+      <p className="text-lg font-bold text-[#1A1714]">{error || 'Course not found.'}</p>
+      <p className="text-sm text-[#A8A29E] max-w-xs">
+        This course may have been deleted or you may not have access to it.
+      </p>
+      <Link to="/courses" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-[#CF7249] px-5 py-2.5 rounded-xl hover:bg-[#B85E38] transition-colors">
+        ← Back to Courses
+      </Link>
+    </div>
+  );
+
+  const isPastDue = (date) => new Date(date) < new Date();
+  const duplicateCount = isInstructor ? findDuplicateTitles(assignments) : 0;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-purple-600 to-purple-700 text-white">
-        <div className="max-w-7xl mx-auto px-6 py-8">
-          <Link to="/courses" className="text-purple-100 hover:text-white mb-4 inline-block">
-            ← Back to Courses
+    <div className="min-h-screen bg-[#F7F3EE]">
+      {/* Sub-header */}
+      <div className="bg-white border-b border-[#E8E1D8] pt-16">
+        <div className="max-w-6xl mx-auto px-6 py-6">
+          <Link to="/courses" className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#A8A29E] hover:text-[#1A1714] mb-4 transition-colors">
+            <IconBack /> All Courses
           </Link>
-          <h1 className="text-4xl font-bold mb-2">
-            {course.course_code} - {course.course_name}
-          </h1>
-          <div className="flex items-center gap-6 text-purple-100">
-            <span>{course.instructor_name}</span>
-            <span>•</span>
-            <span>{course.semester} {course.year}</span>
-            <span>•</span>
-            <span>{students.length} Students</span>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-[#FEF3EC] text-[#CF7249]">{course.course_code}</span>
+                <span className="text-xs text-[#A8A29E]">{course.semester} {course.year}</span>
+              </div>
+              <h1 className="text-2xl font-bold text-[#1A1714]">{course.course_name}</h1>
+              <p className="text-sm text-[#6B6560] mt-1">
+                {isInstructor
+                  ? `${students.length} student${students.length !== 1 ? 's' : ''} enrolled`
+                  : `Instructor: ${course.instructor_name}`}
+              </p>
+            </div>
+            {isInstructor && (
+              <Link to={`/assignments/create?courseId=${course.course_id}`} className="btn-orange flex-shrink-0">
+                + New Assignment
+              </Link>
+            )}
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-6 mt-6">
+            {['assignments', isInstructor && 'students'].filter(Boolean).map(tab => (
+              <button key={tab} onClick={() => setActiveTab(tab)}
+                className={`pb-3 text-sm font-semibold capitalize border-b-2 transition-colors
+                  ${activeTab === tab
+                    ? 'border-[#CF7249] text-[#CF7249]'
+                    : 'border-transparent text-[#6B6560] hover:text-[#1A1714]'}`}>
+                {tab}{' '}
+                {tab === 'assignments' ? `(${assignments.length})` : `(${students.length})`}
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Tabs */}
-        <div className="mb-6 border-b">
-          <div className="flex gap-8">
-            <button
-              onClick={() => setActiveTab('assignments')}
-              className={`pb-4 px-2 font-semibold transition-colors border-b-2 ${
-                activeTab === 'assignments'
-                  ? 'border-purple-600 text-purple-600'
-                  : 'border-transparent text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Assignments ({assignments.length})
-            </button>
-            {isInstructor && (
-              <button
-                onClick={() => setActiveTab('students')}
-                className={`pb-4 px-2 font-semibold transition-colors border-b-2 ${
-                  activeTab === 'students'
-                    ? 'border-purple-600 text-purple-600'
-                    : 'border-transparent text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                Students ({students.length})
-              </button>
-            )}
-          </div>
-        </div>
-
+      <div className="max-w-6xl mx-auto px-6 py-8">
         <div className="grid lg:grid-cols-3 gap-8">
-          {/* Main Content Area */}
-          <div className="lg:col-span-2">
-            {/* Assignments Tab */}
-            {activeTab === 'assignments' && (
-              <div>
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold text-gray-900">Assignments</h2>
-                  {isInstructor && (
-                    <Link
-                      to={`/assignments/create?courseId=${courseId}`}
-                      className="btn-primary"
-                    >
-                      + Create Assignment
-                    </Link>
-                  )}
-                </div>
 
+          {/* Main content */}
+          <div className="lg:col-span-2">
+
+            {/* ── Assignments tab ── */}
+            {activeTab === 'assignments' && (
+              <div className="space-y-3">
                 {assignments.length === 0 ? (
-                  <Card className="text-center py-12">
-                    <p className="text-gray-500 mb-4">No assignments yet</p>
+                  <div className="bg-white rounded-2xl border border-[#E8E1D8] py-20 px-8 text-center">
+                    <EmptyAssignmentVector />
+                    <p className="text-base font-bold text-[#1A1714] mb-2">No assignments yet</p>
+                    <p className="text-sm text-[#6B6560] mb-6 max-w-xs mx-auto">
+                      {isInstructor
+                        ? 'Create the first assignment for this course.'
+                        : "Your instructor hasn't posted any assignments yet."}
+                    </p>
                     {isInstructor && (
-                      <Link
-                        to={`/assignments/create?courseId=${courseId}`}
-                        className="btn-primary"
-                      >
+                      <Link to={`/assignments/create?courseId=${course.course_id}`} className="btn-orange">
                         Create First Assignment
                       </Link>
                     )}
-                  </Card>
+                  </div>
                 ) : (
-                  <div className="space-y-4">
-                    {assignments.map((assignment) => (
-                      <Card key={assignment.assignment_id} hover>
-                        <Link to={`/assignments/${assignment.assignment_id}`}>
-                          <div className="flex justify-between items-start">
-                            <div className="flex-1">
-                              <h3 className="text-xl font-bold text-gray-900 mb-2">
-                                {assignment.title}
-                              </h3>
-                              <p className="text-gray-600 mb-3 line-clamp-2">
-                                {assignment.description}
-                              </p>
-                              <div className="flex items-center gap-6 text-sm text-gray-500">
-                                <span className="flex items-center gap-1">
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                  </svg>
-                                  Due: {new Date(assignment.due_date).toLocaleDateString()}
-                                </span>
-                                <span className="flex items-center gap-1">
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                  </svg>
-                                  {assignment.submission_count || 0} submissions
-                                </span>
+                  <>
+                    {/* Duplicate warning — auto-detected */}
+                    {isInstructor && duplicateCount > 0 && (
+                      <DuplicateWarning count={duplicateCount} />
+                    )}
+
+                    {/* Hint for instructors */}
+                    {isInstructor && (
+                      <p className="text-xs text-[#A8A29E] text-right mb-1">
+                        Click the{' '}
+                        <span className="text-[#C4827A] font-semibold">delete icon</span>{' '}
+                        on any assignment to remove it
+                      </p>
+                    )}
+
+                    {assignments.map(a => {
+                      const aId = a.assignment_id ?? a.id;
+                      return (
+                        <div key={aId} className="relative">
+                          <Link
+                            to={`/assignments/${aId}`}
+                            className={`block bg-white rounded-2xl border border-[#E8E1D8] p-5 hover:shadow-md hover:border-transparent transition-all ${isInstructor ? 'pr-14' : ''}`}
+                          >
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1 min-w-0">
+                                <h3 className="font-bold text-[#1A1714] mb-1">{a.title}</h3>
+                                <p className="text-sm text-[#6B6560] line-clamp-2 mb-3">{a.description}</p>
+                                <div className="flex items-center gap-4 text-xs text-[#A8A29E]">
+                                  <span>Due {new Date(a.due_date).toLocaleDateString()}</span>
+                                  <span>{a.submission_count || 0} submissions</span>
+                                </div>
                               </div>
-                            </div>
-                            <div className="ml-4">
-                              <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                                new Date(assignment.due_date) > new Date()
-                                  ? 'bg-green-100 text-green-700'
-                                  : 'bg-red-100 text-red-700'
-                              }`}>
-                                {new Date(assignment.due_date) > new Date() ? 'Open' : 'Closed'}
+                              <span className={`flex-shrink-0 text-[10px] font-bold px-2.5 py-1 rounded-full
+                                ${isPastDue(a.due_date) ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>
+                                {isPastDue(a.due_date) ? 'Closed' : 'Open'}
                               </span>
                             </div>
-                          </div>
-                        </Link>
-                      </Card>
-                    ))}
-                  </div>
+                          </Link>
+
+                          {/* Delete button — instructor only */}
+                          {isInstructor && (
+                            <button
+                              onClick={(e) => handleDeleteAssignment(e, aId, a.title)}
+                              disabled={deletingId === aId}
+                              title="Delete assignment"
+                              className="absolute top-1/2 -translate-y-1/2 right-4
+                                w-8 h-8 rounded-xl flex items-center justify-center transition-all
+                                bg-white border border-[#F0C4C0] text-[#C4827A]
+                                hover:bg-[#FAEDEC] hover:border-[#C4827A] hover:scale-110
+                                disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              {deletingId === aId ? (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="animate-spin">
+                                  <path d="M12 2a10 10 0 0110 10" opacity="0.3"/><path d="M12 2a10 10 0 0110 10"/>
+                                </svg>
+                              ) : (
+                                <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                                  <polyline points="3 6 5 6 21 6"/>
+                                  <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+                                  <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+                                </svg>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </>
                 )}
               </div>
             )}
 
-            {/* Students Tab */}
+            {/* ── Students tab ── */}
             {activeTab === 'students' && isInstructor && (
-              <div>
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold text-gray-900">Enrolled Students</h2>
-                </div>
-
+              <div className="bg-white rounded-2xl border border-[#E8E1D8] overflow-hidden">
                 {students.length === 0 ? (
-                  <Card className="text-center py-12">
-                    <p className="text-gray-500">No students enrolled yet</p>
-                    <p className="text-sm text-gray-400 mt-2">Share your join code with students</p>
-                  </Card>
+                  <div className="py-20 px-8 text-center">
+                    <EmptyStudentsVector />
+                    <p className="text-base font-bold text-[#1A1714] mb-2">No students enrolled yet</p>
+                    <p className="text-xs text-[#A8A29E] mt-1">Share the join code so students can join.</p>
+                  </div>
                 ) : (
-                  <Card>
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="border-b">
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Name</th>
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Email</th>
-                            <th className="text-left py-3 px-4 font-semibold text-gray-900">Enrolled</th>
-                            <th className="text-right py-3 px-4 font-semibold text-gray-900">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {students.map((student) => (
-                            <tr key={student.user_id} className="border-b last:border-0 hover:bg-gray-50">
-                              <td className="py-3 px-4">
-                                {student.first_name} {student.last_name}
-                              </td>
-                              <td className="py-3 px-4 text-gray-600">{student.email}</td>
-                              <td className="py-3 px-4 text-gray-600">
-                                {new Date(student.enrolled_at).toLocaleDateString()}
-                              </td>
-                              <td className="py-3 px-4 text-right">
-                                <button className="text-purple-600 hover:text-purple-700 text-sm font-semibold">
-                                  View Profile
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Card>
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-[#F0EBE3]">
+                        {['Name', 'Email', 'Enrolled'].map(h => (
+                          <th key={h} className="py-3 px-5 text-left text-[10px] font-bold uppercase tracking-widest text-[#A8A29E]">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {students.map(s => (
+                        <tr key={s.user_id} className="border-b border-[#F0EBE3] last:border-0 hover:bg-[#F7F3EE]/50 transition-colors">
+                          <td className="py-3.5 px-5 text-sm font-semibold text-[#1A1714]">{s.first_name} {s.last_name}</td>
+                          <td className="py-3.5 px-5 text-sm text-[#6B6560]">{s.email}</td>
+                          <td className="py-3.5 px-5 text-xs text-[#A8A29E]">{new Date(s.enrolled_at).toLocaleDateString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 )}
               </div>
             )}
           </div>
 
-          {/* ⭐⭐⭐ SIDEBAR - ADD JOIN CODE CARD HERE ⭐⭐⭐ */}
-          <div className="space-y-6">
-            {/* JOIN CODE CARD (Instructor Only) */}
+          {/* ── Sidebar ── */}
+          <div className="space-y-4">
+
+            {/* Join code card */}
             {isInstructor && (
-              <Card>
-                <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-                  <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                  </svg>
-                  Course Join Code
-                </h3>
-                
-                <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-6 text-center">
-                  <p className="text-sm text-gray-600 mb-3">Share this code with students</p>
-                  
-                  {/* Join Code Display */}
-                  <div className="font-mono text-4xl font-bold text-purple-600 mb-4 tracking-wider select-all">
-                    {course.join_code || 'LOADING...'}
-                  </div>
-                  
-                  {/* Action Buttons */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleCopyCode}
-                      className="flex-1 bg-white hover:bg-gray-50 text-purple-600 font-semibold py-2 px-4 rounded-lg border-2 border-purple-600 transition-colors"
-                    >
-                      📋 Copy Code
-                    </button>
-                    <button
-                      onClick={handleRegenerateCode}
-                      disabled={regenerating}
-                      className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors disabled:bg-gray-400"
-                    >
-                      {regenerating ? '⏳' : '🔄'} Regenerate
-                    </button>
-                  </div>
-                </div>
-                
-                {/* Instructions */}
-                <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                  <p className="text-xs text-blue-800">
-                    💡 <strong>How it works:</strong> Students enter this code on the "Join Course" page to enroll in your class.
+              <div className="bg-white rounded-2xl border border-[#E8E1D8] p-5">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#A8A29E] mb-4">Join Code</p>
+                <div className="bg-[#F7F3EE] rounded-xl p-4 text-center mb-4">
+                  <p className="text-xs text-[#A8A29E] mb-2">Share with students</p>
+                  <p className="font-mono text-3xl font-bold text-[#CF7249] tracking-widest select-all">
+                    {course.join_code || '———'}
                   </p>
                 </div>
-              </Card>
+                <div className="flex gap-2">
+                  <button onClick={handleCopyCode}
+                    className="flex-1 py-2 rounded-xl border border-[#E8E1D8] text-xs font-bold text-[#1A1714] hover:bg-[#F7F3EE] transition-colors">
+                    {copied ? '✓ Copied' : 'Copy'}
+                  </button>
+                  <button onClick={handleRegenerateCode} disabled={regenerating}
+                    className="flex-1 py-2 rounded-xl bg-[#CF7249] text-white text-xs font-bold hover:bg-[#B85E38] transition-colors disabled:opacity-50">
+                    {regenerating ? 'Generating…' : 'Regenerate'}
+                  </button>
+                </div>
+              </div>
             )}
 
-            {/* Other sidebar cards... */}
+            {/* Course info */}
+            <div className="bg-white rounded-2xl border border-[#E8E1D8] p-5">
+              <p className="text-xs font-bold uppercase tracking-widest text-[#A8A29E] mb-4">Course Info</p>
+              <div className="space-y-3 text-sm">
+                {[
+                  ['Code',        course.course_code],
+                  ['Semester',    `${course.semester} ${course.year}`],
+                  ['Students',    students.length || course.student_count || 0],
+                  ['Assignments', assignments.length],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex justify-between">
+                    <span className="text-[#A8A29E]">{label}</span>
+                    <span className="font-semibold text-[#1A1714]">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Duplicate / delete hint — shown when instructor has assignments */}
+            {isInstructor && assignments.length > 0 && (
+              <div className="rounded-2xl border border-[#F0C4C0] bg-[#FAEDEC]/60 p-4">
+                <div className="flex items-start gap-2.5">
+                  <svg width="14" height="14" fill="none" stroke="#C4827A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" className="flex-shrink-0 mt-0.5">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+                    <path d="M9 6V4h6v2"/>
+                  </svg>
+                  <p className="text-xs text-[#C4827A] leading-relaxed">
+                    Use the delete icon on each assignment card to remove duplicates or unwanted entries.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

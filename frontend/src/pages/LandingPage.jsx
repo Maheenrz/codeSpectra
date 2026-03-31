@@ -8,88 +8,71 @@ const LandingPage = () => {
 
   useEffect(() => {
     const iconTimer = setTimeout(() => setShowIcon(true), 1000);
-    const navTimer = setTimeout(() => navigate('/home'), 5000);
-    return () => {
-      clearTimeout(iconTimer);
-      clearTimeout(navTimer);
-    };
+    const navTimer  = setTimeout(() => navigate('/home'), 5000);
+    return () => { clearTimeout(iconTimer); clearTimeout(navTimer); };
   }, [navigate]);
 
   return (
-    /* landing-container: full screen, centered, bg matches --bg var */
-    <div className="relative w-screen h-screen bg-[#f4f4f4] overflow-hidden flex justify-center items-center">
+    <div className="relative w-screen h-screen bg-[#F7F3EE] overflow-hidden flex justify-center items-center">
 
-      {/* landing-content */}
+      {/* Subtle dot-grid texture */}
+      <div className="absolute inset-0 opacity-20"
+        style={{ backgroundImage: 'radial-gradient(circle, #CF7249 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+
+      {/* Content */}
       <div className="relative z-10 text-center">
 
-        {/* logo-text-wrapper: fadeInUp on mount */}
+        {/* Logo */}
         <div className="opacity-0 animate-fade-in-up">
-
-          {/* logo-text: huge pixelify font, purple, glow via drop-shadow */}
-          <span
-            className="
-              font-pixelify font-bold tracking-widest
-              text-[clamp(3rem,10vw,8rem)]
-              text-[#9799ff]
-              [text-shadow:0_0_20px_#c5c9f8,0_0_40px_#c5c9f8]
-            "
-          >
+          <span className="
+            font-pixelify font-bold tracking-widest
+            text-[clamp(3rem,10vw,8rem)]
+            text-[#CF7249]
+            [text-shadow:0_0_30px_rgba(207,114,73,0.3),0_0_60px_rgba(207,114,73,0.15)]
+          ">
             C
             {showIcon ? (
-              <img
-                src={iconGif}
-                alt="o"
-                className="
-                  inline-block align-middle
-                  w-[0.9em] h-[0.9em]
-                  mx-[-0.05em]
-                  opacity-0 animate-icon-appear
-                  mix-blend-screen
-                  brightness-130 contrast-120
-                "
-              />
-            ) : (
-              'o'
-            )}
+              <img src={iconGif} alt="o"
+                className="inline-block align-middle w-[0.9em] h-[0.9em] mx-[-0.05em] opacity-0 animate-icon-appear mix-blend-multiply" />
+            ) : 'o'}
             deSpectra
           </span>
         </div>
 
-        {/* tagline: fade in with delay */}
-        <p
-          className="
-            opacity-0 animate-fade-in
-            mt-4 uppercase tracking-[0.15em]
-            text-[clamp(1rem,3vw,1.5rem)]
-            text-[#6b7280]
-            font-normal
-          "
-        >
-          AI-Powered Code Plagiarism Detection
+        {/* Tagline */}
+        <p className="
+          opacity-0 animate-fade-in
+          mt-4 uppercase tracking-[0.2em]
+          text-[clamp(0.75rem,2vw,1rem)]
+          text-[#A8A29E]
+          font-semibold
+        ">
+          Code Plagiarism Detection
         </p>
 
-        {/* loading dots */}
+        {/* Loading dots — orange */}
         <div className="flex justify-center gap-3 mt-12">
-          <span className="w-3 h-3 rounded-full bg-[#9799ff] shadow-[0_0_20px_#c5c9f8] animate-dot-bounce" />
-          <span className="w-3 h-3 rounded-full bg-[#9799ff] shadow-[0_0_20px_#c5c9f8] animate-dot-bounce-2" />
-          <span className="w-3 h-3 rounded-full bg-[#9799ff] shadow-[0_0_20px_#c5c9f8] animate-dot-bounce-3" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#CF7249] animate-dot-bounce"
+            style={{ boxShadow: '0 0 12px rgba(207,114,73,0.5)' }} />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#CF7249] animate-dot-bounce-2"
+            style={{ boxShadow: '0 0 12px rgba(207,114,73,0.5)' }} />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#CF7249] animate-dot-bounce-3"
+            style={{ boxShadow: '0 0 12px rgba(207,114,73,0.5)' }} />
         </div>
       </div>
 
-      {/* version badge: absolute bottom-right */}
-      <div
-        className="
-          absolute bottom-8 right-8
-          bg-[rgba(99,102,241,0.1)]
-          border-2 border-[#c5c9f8]
-          px-4 py-2 rounded-full
-          text-sm font-semibold text-[#9799ff]
-          backdrop-blur-sm
-          animate-badge-pulse
-        "
-      >
+      {/* Version badge — bottom right */}
+      <div className="
+        absolute bottom-8 right-8
+        bg-white/60 backdrop-blur-sm
+        border border-[#E8E1D8]
+        px-4 py-2 rounded-full
+        text-sm font-semibold text-[#CF7249]
+        animate-badge-pulse
+      ">
         v1.0
       </div>
+
     </div>
   );
 };

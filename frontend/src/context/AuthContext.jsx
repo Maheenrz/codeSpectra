@@ -1,6 +1,7 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { getUser, isAuthenticated } from '../utils/auth';
 import authService from '../services/authService';
+import PageLoader from '../Components/common/PageLoader';
 
 const AuthContext = createContext(null);
 
@@ -54,11 +55,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-2xl text-purple-600">Loading...</div>
-      </div>
-    );
+    return <PageLoader />;
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -17,26 +17,20 @@ from pathlib import Path
 
 # Weight per extension (applied to the combined similarity score)
 EXTENSION_WEIGHTS: dict[str, float] = {
-    # C / C++
+    # Implementation files - full weight
     ".cpp": 1.00,
     ".cc":  1.00,
     ".cxx": 1.00,
     ".c":   1.00,
-    ".h":   0.35,   # header — nearly always boilerplate
-    ".hpp": 0.35,
-    ".hxx": 0.35,
-
-    # Java
     ".java": 1.00,
-
-    # Python
     ".py": 1.00,
-
-    # JavaScript / TypeScript
     ".js":  1.00,
-    ".jsx": 0.90,
-    ".ts":  0.85,   # type annotations inflate apparent similarity
-    ".tsx": 0.85,
+    ".ts":  1.00,
+    # Header files - ZERO weight (exclude from comparison)
+    # These cause false positives due to boilerplate code
+    ".h":   0.00,   # Changed from 0.35 to 0.00
+    ".hpp": 0.00,   # Changed from 0.35 to 0.00
+    ".hxx": 0.00,   # Changed from 0.35 to 0.00
 }
 
 DEFAULT_WEIGHT: float = 0.80  # unknown extensions get a small penalty
@@ -58,4 +52,7 @@ def get_pair_weight(file_a: str, file_b: str) -> float:
     """
     wa = get_extension_weight(file_a)
     wb = get_extension_weight(file_b)
+    # If either is a header (weight 0), skip comparison entirely
+    if wa == 0 or wb == 0:
+        return 0.0
     return min(wa, wb)

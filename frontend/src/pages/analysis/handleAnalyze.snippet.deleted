@@ -1,0 +1,115 @@
+  const handleAnalyze = async () => {
+    const isSingleZip = files.length === 1 && isZip(files[0].name);
+    if (!isSingleZip && files.length < 2) {
+      setError('Upload at least 2 code files, a folder, or a ZIP archive.');
+      return;
+    }
+    setRunning(true); setError(''); setResults(null);
+
+    try {
+      // ── Class ZIP flow ──────────────────────────────────────────────────
+      // Upload → engine extracts ZIP and starts background job → we get job_id
+      // immediately and poll /analysis/zip/results/:jobId every second.
+      if (isSingleZip) {
+        setProgress('Uploading ZIP…');
+        const formData = new FormData();
+        formData.append('file', files[0]);
+
+        const response = await api.post('/analysis/zip', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 120000,  // 2 minutes for upload + extraction
+        });
+
+        const job = response.data;
+        if (!job.job_id) {
+          setProgress('');
+          setResults({ all_pairs: [], metadata: {} });
+          setRunning(false);
+          return;
+        }
+
+        const totalStudents = job.total_students || '?';
+        setProgress(`Analyzing ${totalStudents} students… 0%`);
+
+        // Poll until the background worker completes.
+        // /analysis/zip/results proxies to the engine's /api/analyze/results endpoint.
+        const MAX_POLLS    = 600;  // 10 minutes at 1-second intervals
+        const POLL_MS      = 1000;
+        let   pollCount    = 0;
+        let   pollDone     = false;
+
+        while (pollCount < MAX_POLLS && !pollDone) {
+          await new Promise(r => setTimeout(r, POLL_MS));
+          pollCount++;
+
+          let data;
+          try {
+            const statusRes = await api.get(`/analysis/zip/results/${job.job_id}`);
+            data = statusRes.data;
+          } catch (pollErr) {
+            // Network hiccup — keep trying
+            console.warn(`[Poll ${pollCount}] error: ${pollErr.message}`);
+            continue;
+          }
+
+          const pct = Math.round(data.progress ?? data.progress_percent ?? 0);
+          setProgress(`Analyzing ${totalStudents} students… ${pct}%`);
+
+          if (data.status === 'completed' || data.status === 'partial') {
+            pollDone = true;
+            const rawPairs = data.clone_pairs || data.results || [];
+            const pairs = rawPairs.map(cp => ({
+              file_a:             cp.file_a,
+              file_b:             cp.file_b,
+              combined_score:     cp.effective_score ?? cp.combined_score ?? cp.structural_score ?? 0,
+              structural_score:   cp.structural_score   ?? 0,
+              semantic_score:     cp.semantic_score     ?? 0,
+              type1_score:        cp.type1_score        ?? 0,
+              type2_score:        cp.type2_score        ?? 0,
+              primary_clone_type: cp.primary_clone_type ?? 'none',
+              student_a_name:     data.student_names?.[cp.student_a_id] ?? cp.student_a_name ?? '',
+              student_b_name:     data.student_names?.[cp.student_b_id] ?? cp.student_b_name ?? '',
+              needs_review:       cp.needs_review       ?? false,
+              summary:            cp.summary            ?? '',
+            }));
+            setResults({ all_pairs: pairs, metadata: { total_files: totalStudents } });
+            setProgress('');
+            setRunning(false);
+          } else if (data.status === 'failed') {
+            throw new Error(data.error || 'Analysis job failed on the engine');
+          }
+          // status === 'processing' — keep polling
+        }
+
+        if (!pollDone) {
+          throw new Error('Analysis timed out after 10 minutes. The ZIP may be too large — try splitting it.');
+        }
+        return;
+      }
+
+      // ── Individual files flow ───────────────────────────────────────────
+      setProgress('Uploading files…');
+      const form = new FormData();
+      files.forEach(f => form.append('files', f));
+      form.append('types', JSON.stringify(detectors));
+      form.append('mode', 'detailed');
+      setProgress('Analyzing — extracting fragments…');
+      const data = await api.post('/analysis/files', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 600000,
+      });
+      setProgress('');
+      setResults(data.data);
+      setRunning(false);
+
+    } catch (err) {
+      const msg = err.response?.data?.error || err.response?.data?.detail || err.message || 'Analysis failed.';
+      const isTooBig = msg.includes('Too many files') || msg.includes('synchronous analysis');
+      setError(isTooBig
+        ? `${files.length} files is too many for direct analysis. Put them all in a ZIP and upload the ZIP instead.`
+        : msg
+      );
+      setProgress('');
+      setRunning(false);
+    }
+  };

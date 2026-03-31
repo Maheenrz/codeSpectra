@@ -3,179 +3,102 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import courseService from '../../services/courseService';
 import submissionService from '../../services/submissionService';
-import LoadingSpinner from '../../components/common/LoadingSpinner';
-import Card from '../../components/common/Card';
+import PageLoader from '../../Components/common/PageLoader';
+
+const IconLogOut = () => (<svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>);
+
+const STATUS_STYLE = {
+  completed:  { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500', label: 'Done' },
+  processing: { bg: 'bg-blue-50',    text: 'text-blue-700',    dot: 'bg-blue-500',    label: 'Analyzing' },
+  failed:     { bg: 'bg-red-50',     text: 'text-red-600',     dot: 'bg-red-500',     label: 'Failed' },
+  pending:    { bg: 'bg-[#F7F3EE]',  text: 'text-[#6B6560]',  dot: 'bg-[#A8A29E]',  label: 'Pending' },
+};
 
 const StudentDashboard = () => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const [courses, setCourses] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
     try {
-      const [coursesData, submissionsData] = await Promise.all([
+      const [c, s] = await Promise.all([
         courseService.getStudentCourses(),
         submissionService.getStudentSubmissions(),
       ]);
-      setCourses(coursesData);
-      setSubmissions(submissionsData.slice(0, 5)); // Latest 5
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    } finally {
-      setLoading(false);
-    }
+      setCourses(c);
+      setSubmissions(s);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   };
 
-  if (loading) return <LoadingSpinner message="Loading dashboard..." />;
+  if (loading) return <PageLoader message="Loading your courses…" />;
+
+  const pending = submissions.filter(s => s.analysis_status === 'pending' || s.analysis_status === 'processing').length;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">
-                Welcome back, {user?.firstName}!
-              </h1>
-              <p className="text-gray-600 mt-1">Student Dashboard</p>
-            </div>
-            <Link to="/" className="font-pixelify text-2xl text-purple-600">
-              CodeSpectra
-            </Link>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Stats Grid */}
-        <div className="grid md:grid-cols-3 gap-6 mb-8">
-          <Card>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-600 text-sm">Enrolled Courses</p>
-                <p className="text-3xl font-bold text-purple-600">{courses.length}</p>
-              </div>
-              <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                </svg>
-              </div>
-            </div>
-          </Card>
-
-          <Card>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-600 text-sm">Total Submissions</p>
-                <p className="text-3xl font-bold text-purple-600">{submissions.length}</p>
-              </div>
-              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-            </div>
-          </Card>
-
-          <Card>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-600 text-sm">Pending Analysis</p>
-                <p className="text-3xl font-bold text-purple-600">
-                  {submissions.filter(s => s.analysis_status === 'pending').length}
-                </p>
-              </div>
-              <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-            </div>
-          </Card>
+    <div className="min-h-screen bg-[#F7F3EE]">
+      <main className="max-w-6xl mx-auto px-6 pt-20 pb-12">
+        <div className="mb-10">
+          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-[#2D6A6A] mb-1">Student Dashboard</p>
+          <h1 className="text-3xl font-bold text-[#1A1714]">Welcome, {user?.firstName}</h1>
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-8">
-          {/* My Courses */}
-          <div>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-gray-900">My Courses</h2>
-              <Link to="/courses" className="text-purple-600 hover:text-purple-700 font-semibold">
-                View All →
-              </Link>
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-5 mb-10">
+          {[
+            { label: 'Courses',     value: courses.length,     accent: '#CF7249', bg: '#FEF3EC' },
+            { label: 'Submissions', value: submissions.length, accent: '#2D6A6A', bg: '#EBF4F4' },
+            { label: 'Processing',  value: pending,            accent: '#C4827A', bg: '#FAEDEC' },
+          ].map(({ label, value, accent, bg }) => (
+            <div key={label} className="bg-white rounded-2xl border border-[#E8E1D8] p-6">
+              <p className="text-sm text-[#6B6560] mb-2">{label}</p>
+              <p className="text-4xl font-bold" style={{ color: accent }}>{value}</p>
             </div>
-
-            <div className="space-y-4">
-              {courses.length === 0 ? (
-                <Card>
-                  <p className="text-gray-500 text-center py-8">No courses enrolled yet</p>
-                </Card>
-              ) : (
-                courses.map((course) => (
-                  <Card key={course.course_id} hover>
-                    <Link to={`/courses/${course.course_id}`}>
-                      <h3 className="font-bold text-lg text-gray-900 mb-2">
-                        {course.course_code} - {course.course_name}
-                      </h3>
-                      <p className="text-gray-600 text-sm mb-3">
-                        {course.instructor_name} • {course.semester} {course.year}
-                      </p>
-                      <div className="flex gap-4 text-sm text-gray-500">
-                        <span>{course.assignment_count || 0} assignments</span>
-                      </div>
-                    </Link>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Recent Submissions */}
-          <div>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-gray-900">Recent Submissions</h2>
-              <Link to="/submissions" className="text-purple-600 hover:text-purple-700 font-semibold">
-                View All →
-              </Link>
-            </div>
-
-            <div className="space-y-4">
-              {submissions.length === 0 ? (
-                <Card>
-                  <p className="text-gray-500 text-center py-8">No submissions yet</p>
-                </Card>
-              ) : (
-                submissions.map((submission) => (
-                  <Card key={submission.submission_id} hover>
-                    <Link to={`/submissions/${submission.submission_id}`}>
-                      <div className="flex justify-between items-start mb-2">
-                        <h3 className="font-bold text-gray-900">{submission.assignment_title}</h3>
-                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                          submission.analysis_status === 'completed' ? 'bg-green-100 text-green-700' :
-                          submission.analysis_status === 'processing' ? 'bg-blue-100 text-blue-700' :
-                          submission.analysis_status === 'failed' ? 'bg-red-100 text-red-700' :
-                          'bg-gray-100 text-gray-700'
-                        }`}>
-                          {submission.analysis_status}
-                        </span>
-                      </div>
-                      <p className="text-gray-600 text-sm mb-2">{submission.course_name}</p>
-                      <p className="text-gray-500 text-xs">
-                        Submitted {new Date(submission.submitted_at).toLocaleDateString()}
-                      </p>
-                    </Link>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
+          ))}
         </div>
-      </div>
+
+        {/* Quick actions */}
+        <div className="grid grid-cols-2 gap-4 mb-10">
+          <Link to="/courses" className="bg-white rounded-2xl border border-[#E8E1D8] p-5 hover:shadow-md hover:border-transparent transition-all">
+            <p className="text-xs font-bold uppercase tracking-widest text-[#CF7249] mb-1">My Courses</p>
+            <p className="text-sm text-[#6B6560]">View all enrolled courses</p>
+          </Link>
+          <Link to="/courses/join" className="bg-white rounded-2xl border border-[#E8E1D8] p-5 hover:shadow-md hover:border-transparent transition-all">
+            <p className="text-xs font-bold uppercase tracking-widest text-[#2D6A6A] mb-1">Join Course</p>
+            <p className="text-sm text-[#6B6560]">Enter a course join code</p>
+          </Link>
+        </div>
+
+        {/* Recent submissions */}
+        <h2 className="text-lg font-bold text-[#1A1714] mb-4">Recent Submissions</h2>
+        {submissions.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-[#E8E1D8] p-12 text-center">
+            <p className="text-[#6B6560]">No submissions yet.</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl border border-[#E8E1D8] overflow-hidden">
+            {submissions.slice(0, 8).map((sub, i) => {
+              const S = STATUS_STYLE[sub.analysis_status] || STATUS_STYLE.pending;
+              return (
+                <Link key={sub.submission_id} to={`/submissions/${sub.submission_id}`}
+                  className={`flex items-center justify-between px-6 py-4 hover:bg-[#F7F3EE] transition-colors ${i !== 0 ? 'border-t border-[#F0EBE3]' : ''}`}>
+                  <div>
+                    <p className="text-sm font-semibold text-[#1A1714]">{sub.assignment_title}</p>
+                    <p className="text-xs text-[#A8A29E] mt-0.5">{sub.course_code} · {new Date(sub.submitted_at).toLocaleDateString()}</p>
+                  </div>
+                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${S.bg} ${S.text}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${S.dot}`} />
+                    {S.label}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </main>
     </div>
   );
 };

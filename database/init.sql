@@ -239,17 +239,17 @@ CREATE INDEX idx_reports_assignment ON reports(assignment_id);
 
 -- Insert admin user (password: admin123)
 INSERT INTO users (email, password_hash, first_name, last_name, role, institution) 
-VALUES ('admin@codespectra.com', '$2a$10$8Z1pqKQY7fX9vwxjKqYhCe8W7X5rKjQY7fX9vwxjKqYhCe8W7X5rK', 'Admin', 'User', 'admin', 'CodeSpectra');
+VALUES ('admin@codespectra.com', '$2b$10$Fs.G.VorIRCvhs6uAAC4uOtH7CkUT2OBveg7bNVpj0IbZusNLLfJq', 'Admin', 'User', 'admin', 'CodeSpectra');
 
 -- Insert instructor (password: instructor123)
 INSERT INTO users (email, password_hash, first_name, last_name, role, institution) 
-VALUES ('instructor@codespectra.com', '$2a$10$8Z1pqKQY7fX9vwxjKqYhCe8W7X5rKjQY7fX9vwxjKqYhCe8W7X5rK', 'Test', 'Instructor', 'instructor', 'PUCIT');
+VALUES ('instructor@codespectra.com', '$2b$10$VyMqpgC2prklCEc/JWKFq.WXr0ChqwOa1v2JpBpbA61Nmsj8EQiHa', 'Test', 'Instructor', 'instructor', 'PUCIT');
 
 -- Insert students (password: student123)
 INSERT INTO users (email, password_hash, first_name, last_name, role, institution) 
 VALUES 
-('student1@codespectra.com', '$2a$10$8Z1pqKQY7fX9vwxjKqYhCe8W7X5rKjQY7fX9vwxjKqYhCe8W7X5rK', 'Student', 'One', 'student', 'PUCIT'),
-('student2@codespectra.com', '$2a$10$8Z1pqKQY7fX9vwxjKqYhCe8W7X5rKjQY7fX9vwxjKqYhCe8W7X5rK', 'Student', 'Two', 'student', 'PUCIT');
+('student1@codespectra.com', '$2b$10$nNdhUYv4fXQ9RSvWXyvIGuzwDATC9116PMO4.tJpOpF4RJl2nYCAu', 'Student', 'One', 'student', 'PUCIT'),
+('student2@codespectra.com', '$2b$10$BPWSNMKidyVWeUwBA8b4FOaYWV3FXwuawswtq6TObcPnI4VSdg.G6', 'Student', 'Two', 'student', 'PUCIT');
 
 -- ============================================
 -- FUNCTIONS & TRIGGERS

@@ -1,229 +1,398 @@
-# detectors/type4/type4_detector.py
+# detectors/type4/type4_detector.py (COMPLETE REPLACEMENT)
+
 """
-Type-4 Detector — unified adapter for engine/analyzer.py
-
-Wraps JoernDetector (primary) with custom_pdg fallback.
-Provides the interface that engine/analyzer.py expects:
-
-    detect(file_a, file_b, include_features=False)
-    → {
-        "semantic_score": float,
-        "is_semantic_clone": bool,
-        "confidence": str,           # HIGH / MEDIUM / LOW / UNLIKELY
-        "category_scores": {
-            "control_flow": float,
-            "data_flow": float,
-            "call_pattern": float,
-            "structural": float,
-            "behavioral": float,
-        },
-        "features_a": {"behavioral_hash": str, ...},
-        "features_b": {"behavioral_hash": str, ...},
-      }
-
-    prepare_batch(file_paths) — no-op (kept for API compatibility)
-    clear_cache()             — no-op (kept for API compatibility)
+Type-4 Detector — Production-Ready Educational Semantic Clone Detection
+========================================================================
+Complete pipeline with:
+  1. Graceful Joern fallback (never fails)
+  2. I/O behavioral testing with caching
+  3. Algorithm classification for common assignments
+  4. Research-based score fusion
+  5. Problem-specific detection strategies
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
+import hashlib
+import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+import time
 
 logger = logging.getLogger(__name__)
 
-# Extension → language for Joern
+# Extension to language mapping
 _EXT_LANG: Dict[str, str] = {
-    ".py":   "python",
+    ".py": "python",
     ".java": "java",
-    ".js":   "javascript",
-    ".jsx":  "javascript",
-    ".ts":   "javascript",
-    ".tsx":  "javascript",
-    ".c":    "c",
-    ".cpp":  "cpp", ".cc": "cpp", ".cxx": "cpp",
-    ".h":    "cpp", ".hpp": "cpp",
-    ".go":   "go",
-    ".php":  "php",
+    ".js": "javascript", ".jsx": "javascript",
+    ".ts": "javascript", ".tsx": "javascript",
+    ".c": "c",
+    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp",
+    ".h": "cpp", ".hpp": "cpp", ".hxx": "cpp",
 }
 
 
 class Type4Detector:
     """
-    Unified Type-4 semantic clone detector.
-
-    Tries Joern first; falls back to custom_pdg if Joern / Docker
-    is unavailable.
+    Unified Type-4 semantic clone detector with educational focus.
+    
+    Research-based detection for:
+    - Sorting algorithms (bubble, selection, insertion, merge, quick)
+    - Data structures (stack, queue, linked list, binary tree)
+    - Classic algorithms (fibonacci, factorial, GCD, palindrome)
+    - Search algorithms (linear, binary)
     """
-
-    def __init__(self, threshold: float = 0.55):
+    
+    def __init__(self, threshold: float = 0.60) -> None:
         self.threshold = threshold
-        self._joern: Any   = None
-        self._custom: Any  = None
-        self._mode: str    = "uninitialized"
+        self._edu = None
+        self._custom = None
+        self._mode = "uninitialized"
+        self._cache_dir = Path("./.cache/type4")
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._init_backend()
-
-    # ─── backend initialization ────────────────────────────────────────
-
+    
     def _init_backend(self) -> None:
-        """Try to load Joern; fall back to custom_pdg."""
+        """Initialize with graceful fallbacks"""
+        logger.info("[Type4Detector] Initializing backend…")
+        
+        # Try to initialize educational detector
         try:
-            from detectors.type4.joern.joern_detector import JoernDetector
-            detector = JoernDetector(auto_start=True)
-            # Quick sanity — did Docker come up?
-            status = detector.get_status()
-            if status.get("docker_available") and status.get("container_running"):
-                self._joern = detector
-                self._mode  = "joern"
-                logger.info("✅ [Type4] Using Joern PDG backend")
-                return
+            from detectors.type4.educational import EducationalType4Detector
+            
+            # Check for required tools
+            has_gpp = shutil.which("g++") is not None
+            has_python = shutil.which("python3") or shutil.which("python")
+            
+            if not has_gpp and not has_python:
+                logger.warning("[Type4Detector] No compiler available (g++ or python)")
+            
+            # Try to load Joern (optional)
+            joern = self._try_load_joern()
+            
+            self._edu = EducationalType4Detector(
+                joern_detector=joern,
+                io_threshold=self.threshold,
+                enable_io=True,
+                enable_joern=joern is not None,
+                # NOTE: EducationalType4Detector does not accept cache_dir;
+                # caching is handled at the Type4Detector level above.
+            )
+            self._mode = "educational"
+            logger.info(
+                "✅ [Type4Detector] Educational pipeline ready (joern=%s, compiler=%s)",
+                joern is not None,
+                has_gpp or has_python,
+            )
+            return
+            
+        except ImportError as e:
+            logger.warning("[Type4Detector] Educational module import failed: %s", e)
+        except Exception as e:
+            logger.warning("[Type4Detector] Educational detector init error: %s", e)
+        
+        # Fallback to heuristic detector
+        self._mode = "heuristic"
+        logger.info("⚠️  [Type4Detector] Using heuristic fallback (no compilation)")
+    
+    def _try_load_joern(self) -> Optional[Any]:
+        """Attempt to load Joern detector (optional)"""
+        try:
+            from detectors.type4.joern.robust_joern import get_robust_joern
+            joern = get_robust_joern()
+            if joern.is_available():
+                logger.info("✅ [Type4Detector] Joern available")
+                return joern
             else:
-                logger.warning("⚠️  [Type4] Joern container not running — falling back")
+                logger.info("[Type4Detector] Joern not available")
+                return None
         except Exception as e:
-            logger.warning(f"⚠️  [Type4] Joern init failed ({e}) — falling back to custom_pdg")
-
-        # Fallback
-        try:
-            from detectors.type4.custom_pdg.pdg_detector import Type4PDGDetector
-            self._custom = Type4PDGDetector(threshold=self.threshold)
-            self._mode   = "custom_pdg"
-            logger.info("✅ [Type4] Using custom PDG backend (fallback)")
-        except Exception as e:
-            logger.error(f"❌ [Type4] Both backends failed: {e}")
-            self._mode = "unavailable"
-
-    # ─── public API used by engine/analyzer.py ─────────────────────────
-
+            logger.info("[Type4Detector] Joern load failed: %s", e)
+            return None
+    
     def detect(
         self,
-        file_a: "str | Path",
-        file_b: "str | Path",
+        file_a: str | Path,
+        file_b: str | Path,
         include_features: bool = False,
     ) -> Dict[str, Any]:
-        """Detect semantic similarity between two files."""
-
+        """
+        Detect Type-4 semantic similarity.
+        
+        Returns dict with:
+            semantic_score: float (0-1)
+            is_semantic_clone: bool
+            confidence: str (HIGH/MEDIUM/LOW/UNLIKELY)
+            interpretation: str (human-readable)
+            category: str (detected problem type)
+            io_match_score: float (if available)
+        """
         fa, fb = str(file_a), str(file_b)
-
-        if self._mode == "joern":
-            return self._detect_joern(fa, fb, include_features)
-        elif self._mode == "custom_pdg":
-            return self._detect_custom(fa, fb, include_features)
+        logger.info("[Type4Detector] detect(%s, %s)", Path(fa).name, Path(fb).name)
+        
+        # Check cache
+        cache_key = self._get_cache_key(fa, fb)
+        cached = self._get_cached(cache_key)
+        if cached:
+            logger.info("[Type4Detector] Cache hit")
+            return cached
+        
+        # Run detection
+        if self._mode == "educational":
+            result = self._detect_educational(fa, fb, include_features)
         else:
-            return self._unavailable_result()
-
-    def prepare_batch(self, file_paths: List[Any]) -> None:
-        """No-op — kept for API compatibility with Type3 detector."""
-        pass
-
-    def clear_cache(self) -> None:
-        """No-op — kept for API compatibility."""
-        pass
-
-    # ─── Joern path ────────────────────────────────────────────────────
-
-    def _detect_joern(
-        self,
-        fa: str,
-        fb: str,
-        include_features: bool,
+            result = self._detect_heuristic(fa, fb, include_features)
+        
+        # Cache result
+        self._cache_result(cache_key, result)
+        
+        return result
+    
+    def _detect_educational(
+        self, fa: str, fb: str, include_features: bool
     ) -> Dict[str, Any]:
+        """Use educational detector with full pipeline"""
         try:
-            result = self._joern.detect_from_files(fa, fb)
-
-            if result.status == "error":
-                logger.warning(f"[Type4/Joern] error: {result.error_message}")
-                return self._error_result(result.error_message)
-
-            scores = result.scores
-
-            # Map ConfidenceLevel enum → string used by analyzer
-            conf_map = {"high": "HIGH", "medium": "MEDIUM", "low": "LOW"}
-            confidence = conf_map.get(
-                result.confidence.value if result.confidence else "low",
-                "LOW"
-            )
-            if result.similarity < self.threshold * 0.7:
-                confidence = "UNLIKELY"
-
-            out = {
-                "semantic_score":    round(result.similarity, 4),
-                "is_semantic_clone": result.is_semantic_clone,
-                "confidence":        confidence,
-                "backend":           "joern",
+            result = self._edu.detect(fa, fb, include_features=include_features)
+            
+            # Ensure all required fields
+            result.setdefault("semantic_score", 0.0)
+            result.setdefault("is_semantic_clone", False)
+            result.setdefault("confidence", "UNLIKELY")
+            result.setdefault("interpretation", "")
+            result.setdefault("category", "")
+            result.setdefault("io_match_score", None)
+            result.setdefault("io_available", False)
+            
+            result["backend"] = "educational_type4"
+            return result
+            
+        except Exception as e:
+            logger.error("[Type4Detector] Educational detect() error: %s", e)
+            return self._fallback_result(f"Educational detector failed: {e}")
+    
+    def _detect_heuristic(
+        self, fa: str, fb: str, include_features: bool
+    ) -> Dict[str, Any]:
+        """Fast heuristic detection (no compilation)"""
+        try:
+            # Extract signatures
+            sig_a = self._extract_signature(fa)
+            sig_b = self._extract_signature(fb)
+            
+            # Calculate similarity
+            if not sig_a or not sig_b:
+                score = 0.0
+            else:
+                intersection = len(sig_a & sig_b)
+                union = len(sig_a | sig_b)
+                score = intersection / union if union > 0 else 0.0
+            
+            # Determine category
+            category = self._guess_category(fa, fb)
+            
+            # Build interpretation
+            if score >= 0.60:
+                interpretation = f"⚠️ Possible semantic clone (score={score:.0%})"
+            else:
+                interpretation = f"✅ Low semantic similarity (score={score:.0%})"
+            
+            if category:
+                interpretation = f"{category} | {interpretation}"
+            
+            return {
+                "semantic_score": round(score, 4),
+                "is_semantic_clone": score >= self.threshold,
+                "confidence": self._score_to_confidence(score),
+                "backend": "heuristic",
+                "category": category,
+                "interpretation": interpretation,
+                "io_match_score": None,
+                "io_available": False,
                 "category_scores": {
-                    "control_flow": round(scores.control_flow_similarity, 4),
-                    "data_flow":    round(scores.data_flow_similarity,    4),
-                    "call_pattern": round(scores.node_type_similarity,    4),
-                    "structural":   round(scores.structural_similarity,   4),
-                    "behavioral":   round(
-                        (scores.control_flow_similarity + scores.data_flow_similarity) / 2,
-                        4
-                    ),
+                    "control_flow": score,
+                    "data_flow": score,
+                    "behavioral": score,
                 },
             }
-
-            if include_features:
-                # Attach PDG info as proxy for features
-                out["features_a"] = {
-                    "behavioral_hash": f"pdg:{result.pdg1_info.num_nodes}n:{result.pdg1_info.num_edges}e",
-                    "num_nodes":       result.pdg1_info.num_nodes,
-                    "num_edges":       result.pdg1_info.num_edges,
-                    "methods":         result.pdg1_info.method_names,
-                }
-                out["features_b"] = {
-                    "behavioral_hash": f"pdg:{result.pdg2_info.num_nodes}n:{result.pdg2_info.num_edges}e",
-                    "num_nodes":       result.pdg2_info.num_nodes,
-                    "num_edges":       result.pdg2_info.num_edges,
-                    "methods":         result.pdg2_info.method_names,
-                }
-
-            return out
-
+            
         except Exception as e:
-            logger.error(f"[Type4/Joern] detect_from_files crashed: {e}")
-            # Try custom_pdg as emergency fallback
-            if self._custom:
-                return self._detect_custom(fa, fb, include_features)
-            return self._error_result(str(e))
-
-    # ─── custom_pdg path ───────────────────────────────────────────────
-
-    def _detect_custom(
-        self,
-        fa: str,
-        fb: str,
-        include_features: bool,
-    ) -> Dict[str, Any]:
+            logger.error("[Type4Detector] Heuristic detect error: %s", e)
+            return self._fallback_result(f"Heuristic detection failed: {e}")
+    
+    def _extract_signature(self, file_path: str) -> set:
+        """Extract semantic signature from source file"""
+        path = Path(file_path)
+        if not path.exists():
+            return set()
+        
+        content = path.read_text(encoding='utf-8', errors='ignore')
+        lang = _EXT_LANG.get(path.suffix.lower(), "")
+        
+        signature = set()
+        
+        # Extract function names
+        import re
+        if lang == "cpp":
+            # Function definitions
+            func_patterns = [
+                r'\b(void|int|char|float|double|bool|auto|string)\s+(\w+)\s*\([^)]*\)\s*\{',
+                r'\b(\w+)\s*::\s*(\w+)\s*\([^)]*\)\s*\{',
+            ]
+            for pattern in func_patterns:
+                for match in re.findall(pattern, content):
+                    if isinstance(match, tuple):
+                        name = match[-1] if match[-1] else match[0]
+                    else:
+                        name = match
+                    if name and not name.startswith('_'):
+                        signature.add(f"func:{name}")
+            
+            # Class names
+            for match in re.findall(r'\bclass\s+(\w+)', content):
+                signature.add(f"class:{match}")
+            
+            # Includes
+            for match in re.findall(r'#include\s*[<"]([^>"]+)[>"]', content):
+                signature.add(f"include:{match}")
+        
+        elif lang == "python":
+            # Function definitions
+            for match in re.findall(r'def\s+(\w+)\s*\(', content):
+                signature.add(f"func:{match}")
+            
+            # Class definitions
+            for match in re.findall(r'class\s+(\w+)', content):
+                signature.add(f"class:{match}")
+            
+            # Imports
+            for match in re.findall(r'import\s+(\w+)', content):
+                signature.add(f"import:{match}")
+        
+        # Extract control structures
+        structures = []
+        if 'for' in content.lower():
+            structures.append('has_loop')
+        if 'while' in content.lower():
+            structures.append('has_loop')
+        if 'if' in content.lower():
+            structures.append('has_conditional')
+        if 'return' in content.lower():
+            structures.append('has_return')
+        
+        for s in structures:
+            signature.add(s)
+        
+        return signature
+    
+    def _guess_category(self, file_a: str, file_b: str) -> str:
+        """Guess problem category from filenames and content"""
+        name_a = Path(file_a).stem.lower()
+        name_b = Path(file_b).stem.lower()
+        combined = name_a + name_b
+        
+        categories = {
+            'sort': ['sort', 'bubble', 'selection', 'insertion', 'merge', 'quick'],
+            'stack': ['stack', 'push', 'pop', 'lifo'],
+            'queue': ['queue', 'enqueue', 'dequeue', 'fifo'],
+            'linkedlist': ['linked', 'list', 'node'],
+            'tree': ['tree', 'bst', 'binary', 'node'],
+            'fibonacci': ['fib', 'fibonacci'],
+            'factorial': ['fact', 'factorial'],
+            'gcd': ['gcd', 'hcf', 'euclid'],
+            'palindrome': ['palindrome', 'palin'],
+            'search': ['search', 'find', 'binary', 'linear'],
+        }
+        
+        for cat, keywords in categories.items():
+            if any(kw in combined for kw in keywords):
+                return cat.upper()
+        
+        return ""
+    
+    def _score_to_confidence(self, score: float) -> str:
+        if score >= 0.80:
+            return "HIGH"
+        elif score >= 0.65:
+            return "MEDIUM"
+        elif score >= 0.50:
+            return "LOW"
+        return "UNLIKELY"
+    
+    def _get_cache_key(self, file_a: str, file_b: str) -> str:
+        """Generate cache key from file contents"""
+        def get_hash(path: str) -> str:
+            path = Path(path)
+            if not path.exists():
+                return ""
+            content = path.read_text(encoding='utf-8', errors='ignore')
+            return hashlib.md5(content.encode()).hexdigest()[:16]
+        
+        hash_a = get_hash(file_a)
+        hash_b = get_hash(file_b)
+        combined = f"{hash_a}_{hash_b}_{self.threshold}"
+        return hashlib.md5(combined.encode()).hexdigest()[:16]
+    
+    def _get_cached(self, key: str) -> Optional[Dict]:
+        """Get cached result"""
+        cache_file = self._cache_dir / f"{key}.json"
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    cached = json.load(f)
+                    # Check age (1 day)
+                    age = time.time() - cached.get('timestamp', 0)
+                    if age < 86400:
+                        return cached.get('result')
+            except Exception:
+                pass
+        return None
+    
+    def _cache_result(self, key: str, result: Dict) -> None:
+        """Cache result"""
+        cache_file = self._cache_dir / f"{key}.json"
         try:
-            raw = self._custom.detect(fa, fb, include_features=include_features)
-            # custom_pdg already returns the right dict format
-            raw["backend"] = "custom_pdg"
-            return raw
-        except Exception as e:
-            logger.error(f"[Type4/custom_pdg] crashed: {e}")
-            return self._error_result(str(e))
-
-    # ─── helpers ───────────────────────────────────────────────────────
-
-    @staticmethod
-    def _unavailable_result() -> Dict[str, Any]:
+            with open(cache_file, 'w') as f:
+                json.dump({
+                    'timestamp': time.time(),
+                    'result': result
+                }, f)
+        except Exception:
+            pass
+    
+    def _fallback_result(self, error_msg: str = "") -> Dict[str, Any]:
         return {
-            "semantic_score":    0.0,
+            "semantic_score": 0.0,
             "is_semantic_clone": False,
-            "confidence":        "UNLIKELY",
-            "backend":           "unavailable",
-            "category_scores":   {
+            "confidence": "UNLIKELY",
+            "backend": "unavailable",
+            "interpretation": f"Detection unavailable: {error_msg}" if error_msg else "Detection unavailable",
+            "category": "",
+            "io_match_score": None,
+            "io_available": False,
+            "category_scores": {
                 "control_flow": 0.0,
-                "data_flow":    0.0,
-                "call_pattern": 0.0,
-                "structural":   0.0,
-                "behavioral":   0.0,
+                "data_flow": 0.0,
+                "behavioral": 0.0,
+                "structural": 0.0,
             },
         }
-
-    @staticmethod
-    def _error_result(msg: str) -> Dict[str, Any]:
-        result = Type4Detector._unavailable_result()
-        result["error"] = msg
-        return result
+    
+    def prepare_batch(self, file_paths: List[Any]) -> None:
+        """Batch preparation"""
+        pass
+    
+    def clear_cache(self) -> None:
+        """Clear result cache"""
+        import shutil
+        if self._cache_dir.exists():
+            shutil.rmtree(self._cache_dir)
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("[Type4Detector] Cache cleared")
+    
+    def get_mode(self) -> str:
+        return self._mode

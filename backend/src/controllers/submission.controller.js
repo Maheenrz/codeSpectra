@@ -1,16 +1,9 @@
-// backend/src/controllers/submission.controller.js
-// ── FIXED v2.1 ──
-//   1. On re-submission (UPSERT), reset analysis_status → 'pending'
-//      so the student appears in the next analysis run
-//   2. Delete old code_files on re-submission to avoid stale data
-//   3. Added getSubmissionWithAnalysis for the frontend detail view
-
 const { Submission, CodeFile, Assignment, AnalysisResult } = require('../models');
-const crypto = require('crypto');
-const fs = require('fs').promises;
-const fsSync = require('fs');
-const path = require('path');
-const AdmZip = require('adm-zip');
+const crypto  = require('crypto');
+const fs      = require('fs').promises;
+const fsSync  = require('fs');
+const path    = require('path');
+const AdmZip  = require('adm-zip');
 
 const CODE_EXTENSIONS = new Set([
   '.cpp', '.c', '.h', '.hpp', '.cc', '.cxx',
@@ -18,10 +11,8 @@ const CODE_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx'
 ]);
 
-// ─────────────────────────────────────────────────────────────────
-// Zip extraction helper
-// Extracts a zip into a subfolder next to it, returns all code paths
-// ─────────────────────────────────────────────────────────────────
+// Extracts a ZIP into a sibling directory and returns all code file paths found inside.
+// Skips macOS __MACOSX metadata directories and .DS_Store files.
 async function extractZip(zipPath) {
   const extractDir = zipPath.replace('.zip', '_extracted');
   fsSync.mkdirSync(extractDir, { recursive: true });
@@ -29,13 +20,11 @@ async function extractZip(zipPath) {
   const zip = new AdmZip(zipPath);
   zip.extractAllTo(extractDir, true);
 
-  // Collect all code files recursively
   const codeFiles = [];
   function walk(dir) {
     const entries = fsSync.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
-      // Skip macOS junk
       if (entry.name === '__MACOSX' || entry.name === '.DS_Store') continue;
       if (entry.isDirectory()) {
         walk(full);
@@ -68,39 +57,28 @@ class SubmissionController {
         return res.status(404).json({ error: 'Assignment not found' });
       }
 
-      // ── FIX #1: Check for existing submission ────────────────────────
-      // If the student already submitted, we need to:
-      //   a) Delete old code_files from disk and DB
-      //   b) Reset analysis_status to 'pending' so re-analysis picks it up
+      // If the student is re-submitting, clean up their old files from disk and DB
+      // so we're not comparing stale code. Also reset analysis_status to 'pending'
+      // so the next analysis run picks them up again.
       const existingSubmission = await Submission.findByAssignmentAndStudent(assignmentId, studentId);
       if (existingSubmission) {
-        // Delete old files from disk
         const oldFiles = await Submission.getFiles(existingSubmission.submission_id);
         for (const file of oldFiles) {
           try { await fs.unlink(file.file_path); } catch (_) {}
-          // Also try to clean up extracted directories
           const extractedDir = file.file_path.replace(path.extname(file.file_path), '_extracted');
           try { await fs.rm(extractedDir, { recursive: true, force: true }); } catch (_) {}
         }
-        // Delete old code_files from DB
         await CodeFile.deleteBySubmission(existingSubmission.submission_id);
       }
 
-      // Create or update submission record
-      // The Submission.create UPSERT already handles re-submission, but we need
-      // to ensure analysis_status resets to 'pending'
       const submission = await Submission.create(assignmentId, studentId);
 
-      // ── FIX #2: Explicitly reset analysis_status on re-submission ────
-      // The UPSERT in Submission.create doesn't reset analysis_status, so we do it here
       if (existingSubmission) {
         await Submission.updateStatus(submission.submission_id, 'pending');
       }
 
-      // ── Resolve final list of code files ────────────────────────────
-      // multer gives us the uploaded files. Each may be:
-      //   a) a code file (.cpp, .java, etc.) → use directly
-      //   b) a zip file (.zip) → extract, use the code files inside
+      // Resolve the final list of code files — uploaded files might be
+      // individual source files or a ZIP, or a mix of both.
       const allCodePaths = [];
 
       for (const file of uploadedFiles) {
@@ -124,31 +102,29 @@ class SubmissionController {
         }
       }
 
-      // ── Save each code file to DB ────────────────────────────────────
       const savedFiles = [];
       for (const filePath of allCodePaths) {
         const fileBuffer = await fs.readFile(filePath);
-        const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-        const filename = path.basename(filePath);
+        const fileHash   = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+        const filename   = path.basename(filePath);
 
         const codeFile = await CodeFile.create({
           submissionId: submission.submission_id,
-          filename:     filename,
-          filePath:     filePath,
-          fileHash:     fileHash,
-          fileSize:     fileBuffer.length,
+          filename,
+          filePath,
+          fileHash,
+          fileSize: fileBuffer.length,
         });
         savedFiles.push(codeFile);
       }
 
       res.status(201).json({
-        message:          existingSubmission ? 'Submission updated successfully' : 'Submission created successfully',
+        message:         existingSubmission ? 'Submission updated successfully' : 'Submission created successfully',
         submission,
-        files:            savedFiles,
-        total_files:      savedFiles.length,
-        submission_type:  uploadedFiles.some(f => f.originalname.endsWith('.zip'))
-                          ? 'zip' : 'files',
-        is_resubmission:  !!existingSubmission,
+        files:           savedFiles,
+        total_files:     savedFiles.length,
+        submission_type: uploadedFiles.some(f => f.originalname.endsWith('.zip')) ? 'zip' : 'files',
+        is_resubmission: !!existingSubmission,
       });
 
     } catch (error) {
@@ -171,7 +147,8 @@ class SubmissionController {
     }
   }
 
-  // ── NEW: Get submission with its analysis results ──────────────────────
+  // Returns submission data alongside its analysis results when available.
+  // Used by the submission detail page so it can show similarity scores inline.
   static async getSubmissionWithAnalysis(req, res) {
     try {
       const { submissionId } = req.params;
@@ -181,7 +158,6 @@ class SubmissionController {
       }
       const files = await Submission.getFiles(submissionId);
 
-      // Try to get analysis results if they exist
       let analysisResult = null;
       try {
         analysisResult = await AnalysisResult.findBySubmission(submissionId);
@@ -190,7 +166,7 @@ class SubmissionController {
       res.json({
         ...submission,
         files,
-        analysis: analysisResult || null,
+        analysis:           analysisResult || null,
         analysis_available: !!analysisResult,
       });
     } catch (error) {

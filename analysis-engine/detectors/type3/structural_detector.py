@@ -44,14 +44,10 @@ from detectors.type3.lcs_comparator import lcs_similarity, get_matching_blocks
 from detectors.type3.clone_clusterer import CloneClusterer
 
 
+
 class StructuralDetector:
     """
-    Fragment-level Type-3 detector.
-    Operates at fragment (function/method/block) granularity,
-    not at whole-file granularity.
-
-    Only reports genuine Type-3 clones — Type-1 and Type-2 are
-    filtered out by the dual-similarity discriminator.
+    Fragment-level Type-3 detector with student tracking.
     """
 
     def __init__(
@@ -66,7 +62,68 @@ class StructuralDetector:
             min_tokens = min_fragment_tokens,
         )
         self.clusterer     = CloneClusterer()
-        self._frag_cache:  Dict[str, List[Fragment]] = {}  # file_path → fragments
+        self._frag_cache:  Dict[str, List[Fragment]] = {}  # file_path  fragments
+
+    def detect_batch_with_students(
+        self,
+        student_submissions: List[Dict],  # [{student_id, student_name, files}]
+    ) -> Dict:
+        """
+        Detect clones with student identification.
+        """
+        t0 = time.time()
+        all_pairs = []
+        student_fragments = {}
+        for submission in student_submissions:
+            student_id = submission.get('student_id')
+            student_name = submission.get('student_name')
+            fragments = []
+            for file_path in submission.get('files', []):
+                extracted = self.extractor.extract(file_path)
+                for frag in extracted:
+                    frag.student_id = student_id
+                    frag.student_name = student_name
+                    fragments.append(frag)
+            student_fragments[student_id] = {
+                'name': student_name,
+                'fragments': fragments
+            }
+        clone_results = []
+        student_ids = list(student_fragments.keys())
+        for i in range(len(student_ids)):
+            sid_a = student_ids[i]
+            data_a = student_fragments[sid_a]
+            for j in range(i + 1, len(student_ids)):
+                sid_b = student_ids[j]
+                data_b = student_fragments[sid_b]
+                best_score = 0.0
+                best_pairs = []
+                for fa in data_a['fragments']:
+                    for fb in data_b['fragments']:
+                        result = compare_fragments(fa, fb)
+                        if result.is_type3 and result.type3_score >= self.threshold:
+                            best_pairs.append({
+                                'frag_a': fa,
+                                'frag_b': fb,
+                                'similarity': result.type3_score,
+                                'clone_band': result.clone_band,
+                            })
+                            best_score = max(best_score, result.type3_score)
+                if best_score >= self.threshold:
+                    clone_results.append({
+                        'student_a_id': sid_a,
+                        'student_a_name': data_a['name'],
+                        'student_b_id': sid_b,
+                        'student_b_name': data_b['name'],
+                        'best_score': best_score,
+                        'clone_pairs': best_pairs[:5],
+                        'clone_bands': list(set(p['clone_band'] for p in best_pairs)),
+                    })
+        return {
+            'total_students': len(student_ids),
+            'clone_pairs': clone_results,
+            'processing_time': time.time() - t0
+        }
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -180,12 +237,17 @@ class StructuralDetector:
         n = len(file_paths)
         all_fragment_pairs: List[Dict] = []
         file_pair_scores:   Dict[Tuple, float] = {}
+        processed_pairs = set()  # Track processed pairs to avoid duplicates
 
         for i in range(n):
             frags_i = self._get_fragments(file_paths[i])
             for j in range(i + 1, n):
                 frags_j = self._get_fragments(file_paths[j])
                 best = 0.0
+                pair_key = (Path(file_paths[i]).name, Path(file_paths[j]).name)
+                if pair_key in processed_pairs:
+                    continue
+                processed_pairs.add(pair_key)
                 for fa in frags_i:
                     for fb in frags_j:
                         result = compare_fragments(fa, fb)
