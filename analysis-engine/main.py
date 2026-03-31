@@ -201,143 +201,144 @@ def _process_zip_job(job_id: str, mode: str, data: Any) -> None:
     (dict of student_name -> [file_paths]).
     """
     try:
+        # Extract all file paths first
         if mode == "project":
             all_files = data.get("project", [])
-            n = len(all_files)
-            total_pairs = n * (n - 1) // 2
-
-            job = get_job(job_id)
-            job["total_pairs"] = total_pairs
-            save_job(job_id, job)
-
-            clone_pairs = []
-            done = 0
-            for i in range(n):
-                for j in range(i + 1, n):
-                    try:
-                        pr = analyzer._analyze_pair(all_files[i], all_files[j], include_details=False)
-                        effective = max(pr.type1_score, pr.type2_score, pr.structural.score, pr.semantic.score)
-                        if effective >= 0.25 and pr.primary_clone_type != "none":
-                            clone_pairs.append({
-                                "file_a":             pr.file_a,
-                                "file_b":             pr.file_b,
-                                "type1_score":        pr.type1_score,
-                                "type2_score":        pr.type2_score,
-                                "structural_score":   pr.structural.score,
-                                "semantic_score":     pr.semantic.score,
-                                "effective_score":    round(effective, 4),
-                                "primary_clone_type": pr.primary_clone_type,
-                                "similarity_level":   pr.similarity_level,
-                                "needs_review":       pr.needs_review,
-                                "summary":            pr.summary,
-                            })
-                    except Exception as e:
-                        logger.warning(f"[Job {job_id}] Pair error: {e}")
-                    finally:
-                        done += 1
-                        # Update progress every 50 pairs
-                        if done % 50 == 0 or done == total_pairs:
-                            job = get_job(job_id)
-                            job["analyzed_count"] = done
-                            job["progress"]       = round(done / max(total_pairs, 1) * 100, 1)
-                            job["clone_pairs"]    = clone_pairs
-                            job["results"]        = clone_pairs
-                            job["updated_at"]     = time.time()
-                            save_job(job_id, job)
-
-            job = get_job(job_id)
-            job.update({
-                "status":        "completed",
-                "analyzed_count": done,
-                "progress":      100.0,
-                "clone_pairs":   clone_pairs,
-                "results":       clone_pairs,
-                "updated_at":    time.time(),
-            })
-            save_job(job_id, job)
-            logger.info(f"[Job {job_id}] project mode done — {len(clone_pairs)} pairs from {done} comparisons")
-
+            student_names = {}
         else:
             # class mode: data is dict of { student_name: [file_paths] }
             students = list(data.items())
-            n = len(students)
+            all_files = []
             student_names = {}
+            for idx, (name, files) in enumerate(students):
+                student_names[str(idx + 1)] = name
+                all_files.extend(files)
 
-            # Build all cross-student file pairs upfront so we can track total accurately
-            all_pairs = []
-            for i, (name_i, files_i) in enumerate(students):
-                student_names[str(i + 1)] = name_i
+        n = len(all_files)
+        total_pairs = n * (n - 1) // 2
+
+        job = get_job(job_id)
+        job["total_pairs"] = total_pairs
+        job["student_names"] = student_names
+        save_job(job_id, job)
+
+        # ── ONE‑TIME LAYER SCAN (this was missing!) ──
+        try:
+            from utils.iot_layer_detector import scan_batch_for_layers
+            layer_context = scan_batch_for_layers(all_files)
+            if layer_context.is_multi_layer:
+                logger.info(f"[Job {job_id}] 🌐 Cross-layer detected: {layer_context.reason}")
+        except ImportError:
+            layer_context = None
+
+        clone_pairs = []
+        done = 0
+
+        # Generate all file pairs (cross‑student pairs in class mode)
+        pairs = []
+        if mode == "project":
+            for i in range(n):
                 for j in range(i + 1, n):
+                    pairs.append((all_files[i], all_files[j], None, None))
+        else:
+            # class mode: only pairs between different students
+            students = list(data.items())
+            for i, (name_i, files_i) in enumerate(students):
+                for j in range(i + 1, len(students)):
                     name_j, files_j = students[j]
                     for fa in files_i:
                         for fb in files_j:
-                            all_pairs.append((i + 1, name_i, fa, j + 1, name_j, fb))
+                            pairs.append((fa, fb, i + 1, name_i, j + 1, name_j))
 
-            total_pairs = len(all_pairs)
-            job = get_job(job_id)
-            job["total_pairs"]  = total_pairs
-            job["student_names"] = student_names
-            save_job(job_id, job)
+        for pair in pairs:
+            try:
+                if mode == "project":
+                    fa, fb, _, _ = pair
+                    pr = analyzer._analyze_pair(fa, fb, include_details=False, layer_context=layer_context)
+                    sid_a = sid_b = None
+                    name_a = name_b = None
+                else:
+                    fa, fb, sid_a, name_a, sid_b, name_b = pair
+                    pr = analyzer._analyze_pair(fa, fb, include_details=False, layer_context=layer_context)
 
-            clone_pairs = []
-            done = 0
-            for (sid_a, name_a, fa, sid_b, name_b, fb) in all_pairs:
-                try:
-                    pr = analyzer._analyze_pair(fa, fb, include_details=False)
-                    effective = max(pr.type1_score, pr.type2_score, pr.structural.score, pr.semantic.score)
-                    if effective >= 0.25 and pr.primary_clone_type != "none":
-                        clone_pairs.append({
-                            "student_a_id":       sid_a,
-                            "student_b_id":       sid_b,
-                            "student_a_name":     name_a,
-                            "student_b_name":     name_b,
-                            "file_a":             pr.file_a,
-                            "file_b":             pr.file_b,
-                            "type1_score":        pr.type1_score,
-                            "type2_score":        pr.type2_score,
-                            "structural_score":   pr.structural.score,
-                            "semantic_score":     pr.semantic.score,
-                            "effective_score":    round(effective, 4),
-                            "primary_clone_type": pr.primary_clone_type,
-                            "similarity_level":   pr.similarity_level,
-                            "needs_review":       pr.needs_review,
-                            "summary":            pr.summary,
+                effective = max(pr.type1_score, pr.type2_score, pr.structural.score, pr.semantic.score)
+
+                # A cross-layer pair (e.g. cloud.js vs device.cpp) scores 0 on the
+                # traditional Type1-4 detectors because they only operate within the
+                # same language.  We must check pr.cross_layer separately so these
+                # inter-language IoT pairs still surface in the results.
+                has_cross_layer = bool(
+                    pr.cross_layer
+                    and pr.cross_layer.is_cross_layer
+                    and pr.cross_layer.matches
+                )
+
+                if (effective >= 0.25 and pr.primary_clone_type != "none") or has_cross_layer:
+                    # For pure cross-layer pairs the traditional effective_score is 0
+                    # and primary_clone_type would be "none" — override both so the
+                    # frontend renders something meaningful instead of a blank card.
+                    display_clone_type = pr.primary_clone_type
+                    display_effective  = effective
+                    if has_cross_layer and pr.primary_clone_type == "none":
+                        display_clone_type = "cross_layer"
+                        display_effective  = round(pr.cross_layer.cross_layer_score, 4)
+
+                    entry = {
+                        "file_a":             pr.file_a,
+                        "file_b":             pr.file_b,
+                        "type1_score":        pr.type1_score,
+                        "type2_score":        pr.type2_score,
+                        "structural_score":   pr.structural.score,
+                        "semantic_score":     pr.semantic.score,
+                        "effective_score":    display_effective,
+                        "primary_clone_type": display_clone_type,
+                        "similarity_level":   pr.similarity_level,
+                        "needs_review":       pr.needs_review,
+                        "summary":            pr.summary,
+                    }
+                    if mode != "project":
+                        entry.update({
+                            "student_a_id": sid_a,
+                            "student_b_id": sid_b,
+                            "student_a_name": name_a,
+                            "student_b_name": name_b,
                         })
-                except Exception as e:
-                    logger.warning(f"[Job {job_id}] Pair error {fa} vs {fb}: {e}")
-                finally:
-                    done += 1
-                    if done % 50 == 0 or done == total_pairs:
-                        job = get_job(job_id)
-                        job["analyzed_count"] = done
-                        job["progress"]       = round(done / max(total_pairs, 1) * 100, 1)
-                        job["clone_pairs"]    = clone_pairs
-                        job["results"]        = clone_pairs
-                        job["student_names"]  = student_names
-                        job["updated_at"]     = time.time()
-                        save_job(job_id, job)
+                    # Attach cross-layer info if present
+                    if pr.cross_layer:
+                        entry["cross_layer"] = pr.cross_layer.to_dict()
+                    clone_pairs.append(entry)
+            except Exception as e:
+                logger.warning(f"[Job {job_id}] Pair error {fa} vs {fb}: {e}")
+            finally:
+                done += 1
+                if done % 50 == 0 or done == total_pairs:
+                    job = get_job(job_id)
+                    job["analyzed_count"] = done
+                    job["progress"] = round(done / max(total_pairs, 1) * 100, 1)
+                    job["clone_pairs"] = clone_pairs
+                    job["results"] = clone_pairs
+                    job["updated_at"] = time.time()
+                    save_job(job_id, job)
 
-            job = get_job(job_id)
-            job.update({
-                "status":         "completed",
-                "analyzed_count": done,
-                "progress":       100.0,
-                "clone_pairs":    clone_pairs,
-                "results":        clone_pairs,
-                "student_names":  student_names,
-                "updated_at":     time.time(),
-            })
-            save_job(job_id, job)
-            logger.info(f"[Job {job_id}] class mode done — {len(clone_pairs)} pairs from {done} comparisons")
+        job = get_job(job_id)
+        job.update({
+            "status": "completed",
+            "analyzed_count": done,
+            "progress": 100.0,
+            "clone_pairs": clone_pairs,
+            "results": clone_pairs,
+            "updated_at": time.time(),
+        })
+        save_job(job_id, job)
+        logger.info(f"[Job {job_id}] done — {len(clone_pairs)} pairs from {done} comparisons")
 
     except Exception as e:
         logger.error(f"[Job {job_id}] fatal error: {e}", exc_info=True)
         job = get_job(job_id)
         if job:
             job["status"] = "failed"
-            job["error"]  = str(e)
+            job["error"] = str(e)
             save_job(job_id, job)
-
 
 @app.post("/api/analyze/zip")
 async def analyze_zip(file: UploadFile = File(...)):

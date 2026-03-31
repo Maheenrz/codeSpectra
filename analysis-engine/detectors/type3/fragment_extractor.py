@@ -59,6 +59,7 @@ _EXT_LANG = {
     ".cpp": "cpp", ".c": "cpp", ".h": "cpp",
     ".hpp": "cpp", ".cc": "cpp", ".cxx": "cpp",
     ".java": "java",
+    ".kt": "java",
     ".py": "python",
     ".js": "javascript", ".ts": "javascript",
     ".jsx": "javascript", ".tsx": "javascript",

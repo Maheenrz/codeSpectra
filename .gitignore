@@ -4,22 +4,38 @@ node_modules/
 venv/
 __pycache__/
 *.pyc
+*.pyo
 
 # Environment files — never commit these
 .env
 .env.local
+.env.production
+.env.staging
 
 # Build output
 dist/
 build/
+.next/
 
-# Uploaded files (keep the directory itself)
+# Uploaded files (keep the directories themselves)
 uploads/*
 !uploads/.gitkeep
+backend/uploads/*
+!backend/uploads/.gitkeep
+analysis-engine/uploads/*
+!analysis-engine/uploads/.gitkeep
+
+# Temporary / deleted working files
+*.deleted
+
+# Cache directories
+**/.cache/
+.cache/
 
 # Logs
 logs/
 *.log
+npm-debug.log*
 
 # OS junk
 .DS_Store
@@ -28,6 +44,8 @@ Thumbs.db
 # IDE config
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # Large binary files — models, datasets, etc.
 *.joblib
@@ -38,3 +56,9 @@ joern-cli.zip
 analysis-engine/data/
 analysis-engine/detectors/type4/joern/docker/workspace/
 dsa_dataset/
+
+# Test output / coverage
+coverage/
+.pytest_cache/
+htmlcov/
+*.cover

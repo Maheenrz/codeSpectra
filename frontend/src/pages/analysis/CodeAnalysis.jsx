@@ -3,7 +3,8 @@ import api from '../../utils/api';
 
 const EXT_LANG = {
   '.cpp':'C++', '.c':'C', '.h':'C/C++', '.hpp':'C++', '.cc':'C++', '.cxx':'C++',
-  '.java':'Java', '.py':'Python',
+  '.java':'Java', '.kt':'Kotlin', '.kts':'Kotlin',
+  '.py':'Python',
   '.js':'JavaScript', '.jsx':'JavaScript', '.ts':'TypeScript', '.tsx':'TypeScript',
 };
 const LANG_PILL = {
@@ -14,6 +15,7 @@ const LANG_PILL = {
   'Python':     { bg:'#EBF4F4', color:'#2D6A6A' },
   'JavaScript': { bg:'#EFF2F7', color:'#8B9BB4' },
   'TypeScript': { bg:'#EFF2F7', color:'#8B9BB4' },
+  'Kotlin':     { bg:'#EEEDFE', color:'#534AB7' },
 };
 const RISK = {
   CRITICAL: { label:'Critical', color:'#CF7249', bg:'#FEF3EC', border:'#CF7249' },
@@ -26,7 +28,7 @@ const getExt  = n => '.' + n.split('.').pop().toLowerCase();
 const isZip   = n => n.toLowerCase().endsWith('.zip');
 const fmtSize = b => b > 1048576 ? `${(b/1048576).toFixed(1)} MB` : `${(b/1024).toFixed(1)} KB`;
 const pct     = n => `${Math.round((n || 0) * 100)}%`;
-const CODE_EXTS = new Set(['.cpp','.c','.h','.hpp','.cc','.cxx','.java','.py','.js','.jsx','.ts','.tsx','.zip']);
+const CODE_EXTS = new Set(['.cpp','.c','.h','.hpp','.cc','.cxx','.java','.kt','.kts','.py','.js','.jsx','.ts','.tsx','.zip']);
 
 function getRisk(score) {
   const s = typeof score === 'number' ? score : 0;
@@ -109,7 +111,11 @@ const PairCard = ({ pair, index, getScore }) => {
   const t2 = pair.type2_score ?? 0;
   const t3 = pair.structural_score ?? pair.structural?.score ?? 0;
   const t4 = pair.semantic_score   ?? pair.semantic?.score   ?? 0;
-  const cloneLabel = (pair.primary_clone_type || pair.clone_type || '').replace('type', 'Type-');
+  const cloneLabel = (() => {
+    const raw = pair.primary_clone_type || pair.clone_type || '';
+    if (raw === 'cross_layer') return 'Cross-Layer';
+    return raw.replace('type', 'Type-');
+  })();
   const fragments = (() => {
     if (Array.isArray(pair.fragments) && pair.fragments.length > 0) return pair.fragments;
     try {
@@ -179,6 +185,45 @@ const PairCard = ({ pair, index, getScore }) => {
               </div>
             ))}
           </div>
+          {/* ── Cross-layer matches section (only shown when present) ── */}
+          {pair.cross_layer?.matches?.length > 0 && (
+            <div className="rounded-2xl border-2 overflow-hidden" style={{ borderColor:'#CECBF6' }}>
+              <div className="px-5 py-3 flex items-center justify-between" style={{ background:'#EEEDFE' }}>
+                <div className="flex items-center gap-2">
+                  <span style={{ fontSize:14 }}>🌐</span>
+                  <p className="text-xs font-black uppercase tracking-widest" style={{ color:'#534AB7' }}>Cross-Layer Feature Matches</p>
+                </div>
+                <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ background:'#534AB7', color:'white' }}>
+                  {pair.cross_layer.matches.length} shared
+                </span>
+              </div>
+              <div className="px-5 py-3 bg-white">
+                <p className="text-xs mb-3" style={{ color:'#6B6560' }}>
+                  <span className="font-semibold" style={{ color:'#534AB7' }}>{pair.cross_layer.layer_a}</span>
+                  {' ↔ '}
+                  <span className="font-semibold" style={{ color:'#534AB7' }}>{pair.cross_layer.layer_b}</span>
+                  {' — same function names found across both layers (score: '}
+                  <span className="font-semibold">{Math.round((pair.cross_layer.cross_layer_score ?? 0) * 100)}%</span>
+                  {')'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {pair.cross_layer.matches.map((m, i) => (
+                    <div key={i} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border" style={{ borderColor:'#CECBF6', background:'#F8F7FF' }}>
+                      <code className="text-xs font-bold" style={{ color:'#3C3489' }}>{m.canonical}</code>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md font-semibold" style={{
+                        background: m.match_type === 'exact' ? '#1D9E75' : '#EF9F27',
+                        color: 'white'
+                      }}>{m.match_type}</span>
+                      <span className="text-[10px]" style={{ color:'#888780' }}>
+                        {m.original_a} → {m.original_b}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {fragments.length > 0 ? (
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-[#A8A29E] mb-3">Matching Fragments ({fragments.length})</p>
@@ -272,7 +317,7 @@ export default function CodeAnalysis() {
   const [progress,   setProgress]   = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const ALLOWED = '.cpp,.c,.h,.hpp,.cc,.cxx,.java,.py,.js,.jsx,.ts,.tsx,.zip';
+  const ALLOWED = '.cpp,.c,.h,.hpp,.cc,.cxx,.java,.kt,.kts,.py,.js,.jsx,.ts,.tsx,.zip';
 
   const filterCodeFiles = fl =>
     Array.from(fl).filter(f => CODE_EXTS.has('.' + f.name.split('.').pop().toLowerCase()));

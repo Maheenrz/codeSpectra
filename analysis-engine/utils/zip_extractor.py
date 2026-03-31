@@ -15,10 +15,10 @@ logger = logging.getLogger(__name__)
 # from ZIP collection so they never reach Type-1 or Type-2 detectors either.
 # Only include implementation files.
 _CODE_EXTS = {
-    ".cpp", ".c", ".cc", ".cxx",   # C/C++ implementation
-    ".java",                          # Java
-    ".py",                            # Python
-    ".js", ".jsx", ".ts", ".tsx",   # JavaScript / TypeScript
+    ".cpp", ".c", ".cc", ".cxx",          # C/C++ implementation
+    ".java", ".kt", ".kts",              # Java / Kotlin
+    ".py",                               # Python
+    ".js", ".jsx", ".ts", ".tsx",       # JavaScript / TypeScript
 }
 # Header/interface files are intentionally excluded:
 # ".h", ".hpp", ".hxx" — always boilerplate, cause false positives
@@ -106,31 +106,78 @@ class ZipExtractor:
         # Filter out hidden files
         top_entries = [p for p in root.iterdir() if not p.name.startswith(".")]
         logger.info(f"Top-level entries: {[e.name for e in top_entries]}")
-        
-        # ── Structure A: Check for sub-directories (resulting from nested zips or folders) ──
-        dir_entries = [p for p in top_entries if p.is_dir()]
-        
-        if len(dir_entries) >= 2:
-            logger.info(f"Detected multi-student mode with {len(dir_entries)} directories")
-            student_map: Dict[str, List[str]] = {}
-            for d in dir_entries:
-                files = _collect_code_files(d)
-                if files:
-                    student_map[d.name] = files
-                    logger.info(f"  Student '{d.name}': {len(files)} files")
-                else:
-                    logger.warning(f"  Student '{d.name}': No code files found")
-            
-            if len(student_map) >= 2:
-                logger.info(f"Returning class mode with {len(student_map)} students")
-                return "class", student_map
-            else:
-                logger.warning(f"Only {len(student_map)} students with files, falling back to project mode")
 
-        # ── Structure B: Single project / Flat zip ────────────────────────
+        dir_entries = [p for p in top_entries if p.is_dir()]
+
+        # ── Structure A: 2+ top-level directories → multi-student / multi-layer ──
+        # e.g.  my.zip / phone/ + watch/   or   my.zip / alice/ + bob/ + carol/
+        if len(dir_entries) >= 2:
+            result = self._try_build_student_map(dir_entries)
+            if result:
+                return "class", result
+
+        # ── Structure B: Exactly 1 top-level directory ────────────────────
+        # Very common pattern: user zips a folder, so everything lives one
+        # level deeper.  E.g.:
+        #   my.zip / DataLayer / phone / *.kt
+        #                      / watch / *.kt
+        # We peek inside that single wrapper directory and try again.
+        if len(dir_entries) == 1:
+            wrapper = dir_entries[0]
+            inner_entries = [p for p in wrapper.iterdir() if not p.name.startswith(".")]
+            inner_dirs    = [p for p in inner_entries if p.is_dir()]
+
+            if len(inner_dirs) >= 2:
+                logger.info(
+                    f"Single wrapper directory '{wrapper.name}' contains "
+                    f"{len(inner_dirs)} sub-directories — treating as layers"
+                )
+                result = self._try_build_student_map(inner_dirs)
+                if result:
+                    return "class", result
+
+            # The wrapper itself might be a repo root with deep nesting —
+            # collect everything as a flat project and let the layer detector
+            # sort out which files belong to which tier.
+            logger.info(
+                f"Wrapper directory '{wrapper.name}' — collecting all code files as project"
+            )
+            all_files = _collect_code_files(wrapper)
+            if all_files:
+                logger.info(f"Detected project mode (via wrapper) with {len(all_files)} files")
+                return "project", {"project": all_files}
+
+        # ── Structure C: Flat zip — files at root level ───────────────────
         all_files = _collect_code_files(root)
         logger.info(f"Detected project mode with {len(all_files)} files")
         return "project", {"project": all_files}
+
+    def _try_build_student_map(
+        self,
+        dir_entries: List[Path],
+    ) -> Dict[str, List[str]]:
+        """
+        Given a list of directories, collect code files from each and return
+        a student_map if at least 2 directories contain code files.
+        Returns an empty dict if fewer than 2 directories have files.
+        """
+        student_map: Dict[str, List[str]] = {}
+        for d in dir_entries:
+            files = _collect_code_files(d)
+            if files:
+                student_map[d.name] = files
+                logger.info(f"  Layer/student '{d.name}': {len(files)} files")
+            else:
+                logger.warning(f"  Directory '{d.name}': no code files found — skipped")
+
+        if len(student_map) >= 2:
+            logger.info(f"Returning class mode with {len(student_map)} groups")
+            return student_map
+
+        logger.warning(
+            f"Only {len(student_map)} group(s) had code files — falling back to project mode"
+        )
+        return {}
 
     @staticmethod
     def _clean_macos(root: Path) -> None:
